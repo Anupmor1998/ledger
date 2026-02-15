@@ -1,0 +1,55 @@
+Prisma + PostgreSQL Daily Workflow (Node.js)
+
+1) One-time setup
+- Install dependencies:
+  npm install
+- Ensure PostgreSQL is running.
+- Set DATABASE_URL in .env
+  Example:
+  DATABASE_URL="postgresql://postgres:postgres@localhost:5432/ledger?schema=public"
+
+2) Start app for daily development
+- Run:
+  npm run dev
+
+3) When you only change DATA (no schema change)
+- Example: create/update/delete rows using API.
+- No migration command needed.
+- Use your app endpoints or Prisma Client queries directly.
+
+4) When you change SCHEMA (model/fields/relations)
+- Edit prisma/schema.prisma
+- Create and apply migration:
+  npm run prisma:migrate -- --name <short_change_name>
+- If needed, regenerate client:
+  npm run prisma:generate
+
+5) View and edit data quickly
+- Open Prisma Studio:
+  npm run prisma:studio
+
+6) Quick prototyping command (optional)
+- Push schema directly without migration files:
+  npm run prisma:push
+- Good for experiments; not ideal for team/history-based workflow.
+
+7) If local DB gets messy (WARNING: deletes data)
+- Reset local database and reapply migrations:
+  npx prisma migrate reset
+
+8) Production deployment flow
+- Commit migration files to git.
+- On production server, apply migrations:
+  npx prisma migrate deploy
+
+9) Useful PostgreSQL checks (optional)
+- Open psql:
+  psql -U <user> -d <db_name>
+- Inside psql:
+  \dt
+  \d "User"
+  SELECT * FROM "User";
+
+Rule of thumb:
+- Structure change => migrate
+- Data change => normal Prisma queries only
