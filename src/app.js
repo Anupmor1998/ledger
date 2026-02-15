@@ -5,6 +5,7 @@ const healthRoutes = require("./routes/healthRoutes");
 const manufacturerRoutes = require("./routes/manufacturerRoutes");
 const orderRoutes = require("./routes/orderRoutes");
 const qualityRoutes = require("./routes/qualityRoutes");
+const reportRoutes = require("./routes/reportRoutes");
 const userRoutes = require("./routes/userRoutes");
 const { notFoundHandler, errorHandler } = require("./middlewares/errorHandler");
 
@@ -20,6 +21,7 @@ app.use(`${apiPrefix}/customers`, customerRoutes);
 app.use(`${apiPrefix}/manufacturers`, manufacturerRoutes);
 app.use(`${apiPrefix}/qualities`, qualityRoutes);
 app.use(`${apiPrefix}/orders`, orderRoutes);
+app.use(`${apiPrefix}/reports`, reportRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
