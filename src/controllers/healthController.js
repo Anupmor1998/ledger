@@ -1,13 +1,10 @@
 const prisma = require("../config/prisma");
+const asyncHandler = require("../utils/asyncHandler");
 
-async function getHealth(_req, res) {
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-    return res.json({ status: "ok", db: "connected" });
-  } catch (error) {
-    return res.status(500).json({ status: "error", db: "not connected", message: error.message });
-  }
-}
+const getHealth = asyncHandler(async (_req, res) => {
+  await prisma.$queryRaw`SELECT 1`;
+  return res.json({ status: "ok", db: "connected" });
+});
 
 module.exports = {
   getHealth,
