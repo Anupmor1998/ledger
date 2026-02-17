@@ -1,4 +1,5 @@
 const express = require("express");
+const cors = require("cors");
 const authRoutes = require("./routes/authRoutes");
 const customerRoutes = require("./routes/customerRoutes");
 const healthRoutes = require("./routes/healthRoutes");
@@ -7,11 +8,20 @@ const orderRoutes = require("./routes/orderRoutes");
 const qualityRoutes = require("./routes/qualityRoutes");
 const reportRoutes = require("./routes/reportRoutes");
 const userRoutes = require("./routes/userRoutes");
+const { CORS_ORIGIN } = require("./config/env");
 const { notFoundHandler, errorHandler } = require("./middlewares/errorHandler");
 
 const app = express();
 const apiPrefix = "/api";
 
+app.use(
+  cors({
+    origin: CORS_ORIGIN,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
+  })
+);
 app.use(express.json());
 
 app.use(`${apiPrefix}/health`, healthRoutes);
