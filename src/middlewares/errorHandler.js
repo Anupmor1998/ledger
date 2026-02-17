@@ -1,13 +1,86 @@
 const AppError = require("../utils/appError");
 
+const ACRONYM_LABELS = {
+  gst: "GST",
+  gstin: "GSTIN",
+  id: "ID",
+  no: "No",
+  url: "URL",
+};
+
+function toTitleCase(value) {
+  return value
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => {
+      const lower = word.toLowerCase();
+      if (ACRONYM_LABELS[lower]) {
+        return ACRONYM_LABELS[lower];
+      }
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    })
+    .join(" ");
+}
+
+function extractFieldName(rawTarget) {
+  const target = String(rawTarget || "").trim();
+  if (!target) return "field";
+
+  // e.g. public.Customer.email -> email
+  if (target.includes(".")) {
+    return target.split(".").pop();
+  }
+
+  // e.g. Customer_email_key -> email, Order_customerId_key -> customerId
+  if (target.endsWith("_key")) {
+    const parts = target.replace(/_key$/i, "").split("_").filter(Boolean);
+    if (parts.length >= 2) {
+      return parts.slice(1).join("_");
+    }
+  }
+
+  return target;
+}
+
+function humanizeFieldLabel(rawField) {
+  const fieldName = extractFieldName(rawField);
+
+  // camelCase -> camel Case
+  const spaced = fieldName
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .trim();
+
+  return toTitleCase(spaced || "field");
+}
+
+function buildUniqueMessage(error) {
+  const targets = Array.isArray(error.meta?.target)
+    ? error.meta.target
+    : error.meta?.target
+      ? [error.meta.target]
+      : [];
+
+  if (!targets.length) {
+    return "This value already exists. Please use a different value.";
+  }
+
+  const readableFields = [...new Set(targets.map(humanizeFieldLabel))];
+
+  if (readableFields.length === 1) {
+    return `${readableFields[0]} already exists. Please use a different value.`;
+  }
+
+  return `${readableFields.join(", ")} combination already exists. Please use different values.`;
+}
+
 function mapPrismaError(error) {
   if (!error?.code) {
     return null;
   }
 
   if (error.code === "P2002") {
-    const targets = Array.isArray(error.meta?.target) ? error.meta.target.join(", ") : "unique field";
-    return new AppError(`${targets} already exists`, 409);
+    return new AppError(buildUniqueMessage(error), 409);
   }
 
   if (error.code === "P2003") {
