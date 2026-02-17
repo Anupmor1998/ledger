@@ -2,6 +2,12 @@ const prisma = require("../config/prisma");
 const AppError = require("../utils/appError");
 const asyncHandler = require("../utils/asyncHandler");
 const { buildOrderWhatsAppLinks } = require("../utils/whatsapp");
+const {
+  buildPaginatedResponse,
+  normalizeSearch,
+  parsePagination,
+  parseSort,
+} = require("../utils/listQuery");
 
 function normalizeOrder(order) {
   return {
@@ -74,9 +80,54 @@ const createOrder = asyncHandler(async (req, res) => {
   return res.status(201).json(normalizeOrder(order));
 });
 
-const listOrders = asyncHandler(async (_req, res) => {
+const ORDER_SORT_FIELDS = [
+  "orderNo",
+  "orderDate",
+  "rate",
+  "quantity",
+  "createdAt",
+  "updatedAt",
+  "customerName",
+  "manufacturerName",
+  "qualityName",
+];
+
+function buildOrderSort(sortBy, sortOrder) {
+  if (sortBy === "customerName") {
+    return { customer: { name: sortOrder } };
+  }
+  if (sortBy === "manufacturerName") {
+    return { manufacturer: { name: sortOrder } };
+  }
+  if (sortBy === "qualityName") {
+    return { quality: { name: sortOrder } };
+  }
+  return { [sortBy]: sortOrder };
+}
+
+const listOrders = asyncHandler(async (req, res) => {
+  const pagination = parsePagination(req.query);
+  const { sortBy, sortOrder } = parseSort(req.query, ORDER_SORT_FIELDS, "createdAt", "desc");
+  const search = normalizeSearch(req.query.search);
+
+  const where = search
+    ? {
+        OR: [
+          { orderNo: { contains: search, mode: "insensitive" } },
+          { customer: { is: { name: { contains: search, mode: "insensitive" } } } },
+          { customer: { is: { gstNo: { contains: search, mode: "insensitive" } } } },
+          { manufacturer: { is: { name: { contains: search, mode: "insensitive" } } } },
+          { manufacturer: { is: { gstNo: { contains: search, mode: "insensitive" } } } },
+          { quality: { is: { name: { contains: search, mode: "insensitive" } } } },
+        ],
+      }
+    : undefined;
+
   const orders = await prisma.order.findMany({
-    orderBy: { createdAt: "desc" },
+    where,
+    orderBy: buildOrderSort(sortBy, sortOrder),
+    skip: pagination.skip,
+    take: pagination.take,
     include: {
       user: { select: { id: true, name: true, email: true } },
       customer: true,
@@ -85,7 +136,14 @@ const listOrders = asyncHandler(async (_req, res) => {
     },
   });
 
-  return res.json(orders.map(normalizeOrder));
+  const normalized = orders.map(normalizeOrder);
+
+  if (!pagination.enabled) {
+    return res.json(normalized);
+  }
+
+  const total = await prisma.order.count({ where });
+  return res.json(buildPaginatedResponse(normalized, total, pagination.page, pagination.limit));
 });
 
 const getOrderById = asyncHandler(async (req, res) => {

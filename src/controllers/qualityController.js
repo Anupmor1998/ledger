@@ -1,6 +1,12 @@
 const prisma = require("../config/prisma");
 const AppError = require("../utils/appError");
 const asyncHandler = require("../utils/asyncHandler");
+const {
+  buildPaginatedResponse,
+  normalizeSearch,
+  parsePagination,
+  parseSort,
+} = require("../utils/listQuery");
 
 function validateQualityPayload(body, { partial = false } = {}) {
   if (!partial && !body.name) {
@@ -23,11 +29,32 @@ const createQuality = asyncHandler(async (req, res) => {
   return res.status(201).json(quality);
 });
 
-const listQualities = asyncHandler(async (_req, res) => {
+const QUALITY_SORT_FIELDS = ["name", "createdAt", "updatedAt"];
+
+const listQualities = asyncHandler(async (req, res) => {
+  const pagination = parsePagination(req.query);
+  const { sortBy, sortOrder } = parseSort(req.query, QUALITY_SORT_FIELDS, "name", "asc");
+  const search = normalizeSearch(req.query.search);
+
+  const where = search
+    ? {
+        name: { contains: search, mode: "insensitive" },
+      }
+    : undefined;
+
   const qualities = await prisma.quality.findMany({
-    orderBy: { name: "asc" },
+    where,
+    orderBy: { [sortBy]: sortOrder },
+    skip: pagination.skip,
+    take: pagination.take,
   });
-  return res.json(qualities);
+
+  if (!pagination.enabled) {
+    return res.json(qualities);
+  }
+
+  const total = await prisma.quality.count({ where });
+  return res.json(buildPaginatedResponse(qualities, total, pagination.page, pagination.limit));
 });
 
 const getQualityById = asyncHandler(async (req, res) => {

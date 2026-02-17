@@ -1,6 +1,12 @@
 const prisma = require("../config/prisma");
 const AppError = require("../utils/appError");
 const asyncHandler = require("../utils/asyncHandler");
+const {
+  buildPaginatedResponse,
+  normalizeSearch,
+  parsePagination,
+  parseSort,
+} = require("../utils/listQuery");
 
 function validateCustomerPayload(body, { partial = false } = {}) {
   const requiredFields = ["name", "gstNo", "address", "phone"];
@@ -29,11 +35,40 @@ const createCustomer = asyncHandler(async (req, res) => {
   return res.status(201).json(customer);
 });
 
-const listCustomers = asyncHandler(async (_req, res) => {
-  const customers = await prisma.customer.findMany({
-    orderBy: { createdAt: "desc" },
-  });
-  return res.json(customers);
+const CUSTOMER_SORT_FIELDS = ["name", "gstNo", "email", "phone", "address", "createdAt", "updatedAt"];
+
+const listCustomers = asyncHandler(async (req, res) => {
+  const pagination = parsePagination(req.query);
+  const { sortBy, sortOrder } = parseSort(req.query, CUSTOMER_SORT_FIELDS, "createdAt", "desc");
+  const search = normalizeSearch(req.query.search);
+
+  const where = search
+    ? {
+        OR: [
+          { name: { contains: search, mode: "insensitive" } },
+          { gstNo: { contains: search, mode: "insensitive" } },
+          { email: { contains: search, mode: "insensitive" } },
+          { phone: { contains: search, mode: "insensitive" } },
+          { address: { contains: search, mode: "insensitive" } },
+        ],
+      }
+    : undefined;
+
+  const findOptions = {
+    where,
+    orderBy: { [sortBy]: sortOrder },
+    skip: pagination.skip,
+    take: pagination.take,
+  };
+
+  const customers = await prisma.customer.findMany(findOptions);
+
+  if (!pagination.enabled) {
+    return res.json(customers);
+  }
+
+  const total = await prisma.customer.count({ where });
+  return res.json(buildPaginatedResponse(customers, total, pagination.page, pagination.limit));
 });
 
 const getCustomerById = asyncHandler(async (req, res) => {
