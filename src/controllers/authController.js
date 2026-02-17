@@ -21,7 +21,7 @@ const signup = asyncHandler(async (req, res) => {
   const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
   const user = await prisma.user.create({
     data: { email, name, password: passwordHash },
-    select: { id: true, email: true, name: true, createdAt: true },
+    select: { id: true, email: true, name: true, theme: true, createdAt: true },
   });
 
   const token = createToken(user);
@@ -49,7 +49,13 @@ const login = asyncHandler(async (req, res) => {
 
   const token = createToken(user);
   return res.json({
-    user: { id: user.id, email: user.email, name: user.name, createdAt: user.createdAt },
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      theme: user.theme,
+      createdAt: user.createdAt,
+    },
     token,
   });
 });
