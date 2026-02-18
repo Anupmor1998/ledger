@@ -8,7 +8,7 @@ const orderRoutes = require("./routes/orderRoutes");
 const qualityRoutes = require("./routes/qualityRoutes");
 const reportRoutes = require("./routes/reportRoutes");
 const userRoutes = require("./routes/userRoutes");
-const { CORS_ORIGIN } = require("./config/env");
+const { CORS_ORIGINS } = require("./config/env");
 const { notFoundHandler, errorHandler } = require("./middlewares/errorHandler");
 
 const app = express();
@@ -16,7 +16,12 @@ const apiPrefix = "/api";
 
 app.use(
   cors({
-    origin: CORS_ORIGIN,
+    origin(origin, callback) {
+      if (!origin || CORS_ORIGINS.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error("Not allowed by CORS"));
+    },
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
