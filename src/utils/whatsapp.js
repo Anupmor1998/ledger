@@ -1,8 +1,27 @@
-const TEST_WHATSAPP_NUMBER = "9537244302";
+function toIndianWhatsAppNumber(phone) {
+  const digits = String(phone || "").replace(/\D/g, "");
+  if (!digits) {
+    return null;
+  }
 
-function buildWhatsAppLink(message, phone = TEST_WHATSAPP_NUMBER) {
-  const cleanedPhone = String(phone).replace(/\D/g, "");
-  return `https://wa.me/${cleanedPhone}?text=${encodeURIComponent(message)}`;
+  if (digits.startsWith("91") && digits.length === 12) {
+    return digits;
+  }
+
+  if (digits.length < 10) {
+    return null;
+  }
+
+  const lastTenDigits = digits.slice(-10);
+  return `91${lastTenDigits}`;
+}
+
+function buildWhatsAppLink(message, phone) {
+  const normalizedPhone = toIndianWhatsAppNumber(phone);
+  if (!normalizedPhone) {
+    return null;
+  }
+  return `https://wa.me/${normalizedPhone}?text=${encodeURIComponent(message)}`;
 }
 
 function formatDate(value) {
@@ -56,12 +75,11 @@ function buildOrderWhatsAppLinks(order) {
   const customerMessage = buildCustomerMessage(order);
 
   return {
-    manufacturer: buildWhatsAppLink(manufacturerMessage),
-    customer: buildWhatsAppLink(customerMessage),
+    manufacturer: buildWhatsAppLink(manufacturerMessage, order.manufacturer?.phone),
+    customer: buildWhatsAppLink(customerMessage, order.customer?.phone),
   };
 }
 
 module.exports = {
   buildOrderWhatsAppLinks,
-  TEST_WHATSAPP_NUMBER,
 };
