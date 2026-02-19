@@ -1,11 +1,22 @@
 const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const prisma = require("../config/prisma");
+const { FRONTEND_URL } = require("../config/env");
 const { createToken } = require("../utils/jwt");
+const { sendPasswordResetEmail, USING_PLACEHOLDER_KEY } = require("../utils/email");
 const AppError = require("../utils/appError");
 const asyncHandler = require("../utils/asyncHandler");
 
 const SALT_ROUNDS = 10;
+
+function buildResetPasswordUrl(token) {
+  if (!FRONTEND_URL) {
+    return null;
+  }
+
+  const baseUrl = FRONTEND_URL.endsWith("/") ? FRONTEND_URL.slice(0, -1) : FRONTEND_URL;
+  return `${baseUrl}/reset-password?token=${encodeURIComponent(token)}`;
+}
 
 const signup = asyncHandler(async (req, res) => {
   const { email, name, password } = req.body;
@@ -86,10 +97,23 @@ const forgotPassword = asyncHandler(async (req, res) => {
     },
   });
 
+  const resetPasswordUrl = buildResetPasswordUrl(rawToken);
+  const emailSent = await sendPasswordResetEmail(user.email, resetPasswordUrl);
+
+  if (emailSent) {
+    return res.json({
+      message: "if this email is registered, a reset email has been sent",
+    });
+  }
+
   return res.json({
     ...genericMessage,
     resetToken: rawToken,
-    note: "for development only; in production this token should be sent via email",
+    note: USING_PLACEHOLDER_KEY
+      ? "Replace RESEND_API_KEY value re_xxxxxxxxx with your real API key to enable email delivery."
+      : !resetPasswordUrl
+      ? "Set FRONTEND_URL in env to generate reset links. Returning token for development fallback."
+      : "reset email could not be sent, returning token for development fallback",
   });
 });
 
