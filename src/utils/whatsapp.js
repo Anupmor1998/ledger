@@ -58,6 +58,7 @@ function buildCustomerStyleMessage(
   const paymentDueDays = resolvePaymentDueDays(order, {
     addExtraDays: addExtraPaymentDueDays,
   });
+  const remark = String(order?.remarks || "").trim();
 
   return [
     "*ORDER CONFIRMATION*",
@@ -71,6 +72,7 @@ function buildCustomerStyleMessage(
     `- Qty: ${quantityLabel}`,
     `- Rate: Rs. ${formatRate(order.rate)} + GST`,
     `- Payment Dhara: ${paymentDueDays} days`,
+    ...(remark ? [`- Remark: ${remark}`] : []),
     "",
     `*Order No:* ${order.orderNo}`,
     `*Order Date:* ${formatDate(order.orderDate)}`,
