@@ -9,7 +9,7 @@ const {
 } = require("../utils/listQuery");
 
 function validateManufacturerPayload(body, { partial = false } = {}) {
-  const requiredFields = ["name", "gstNo", "address", "phone"];
+  const requiredFields = ["name", "address", "phone"];
 
   if (!partial) {
     for (const field of requiredFields) {
@@ -23,21 +23,21 @@ function validateManufacturerPayload(body, { partial = false } = {}) {
 }
 
 const createManufacturer = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
   const validationError = validateManufacturerPayload(req.body);
   if (validationError) {
     throw new AppError(validationError, 400);
   }
 
-  const { name, gstNo, address, email, phone } = req.body;
+  const { name, address, email, phone } = req.body;
   const manufacturer = await prisma.manufacturer.create({
-    data: { name, gstNo, address, email, phone },
+    data: { userId, name, address, email, phone },
   });
   return res.status(201).json(manufacturer);
 });
 
 const MANUFACTURER_SORT_FIELDS = [
   "name",
-  "gstNo",
   "email",
   "phone",
   "address",
@@ -46,6 +46,7 @@ const MANUFACTURER_SORT_FIELDS = [
 ];
 
 const listManufacturers = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
   const pagination = parsePagination(req.query);
   const { sortBy, sortOrder } = parseSort(
     req.query,
@@ -55,17 +56,19 @@ const listManufacturers = asyncHandler(async (req, res) => {
   );
   const search = normalizeSearch(req.query.search);
 
-  const where = search
-    ? {
+  const where = {
+    userId,
+    ...(search
+      ? {
         OR: [
           { name: { contains: search, mode: "insensitive" } },
-          { gstNo: { contains: search, mode: "insensitive" } },
           { email: { contains: search, mode: "insensitive" } },
           { phone: { contains: search, mode: "insensitive" } },
           { address: { contains: search, mode: "insensitive" } },
         ],
       }
-    : undefined;
+      : {}),
+  };
 
   const manufacturers = await prisma.manufacturer.findMany({
     where,
@@ -83,8 +86,9 @@ const listManufacturers = asyncHandler(async (req, res) => {
 });
 
 const getManufacturerById = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
   const { id } = req.params;
-  const manufacturer = await prisma.manufacturer.findUnique({ where: { id } });
+  const manufacturer = await prisma.manufacturer.findFirst({ where: { id, userId } });
 
   if (!manufacturer) {
     throw new AppError("manufacturer not found", 404);
@@ -94,6 +98,7 @@ const getManufacturerById = asyncHandler(async (req, res) => {
 });
 
 const updateManufacturer = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
   const { id } = req.params;
   const validationError = validateManufacturerPayload(req.body, { partial: true });
 
@@ -101,18 +106,29 @@ const updateManufacturer = asyncHandler(async (req, res) => {
     throw new AppError(validationError, 400);
   }
 
-  const { name, gstNo, address, email, phone } = req.body;
+  const { name, address, email, phone } = req.body;
+  const existing = await prisma.manufacturer.findFirst({
+    where: { id, userId },
+    select: { id: true },
+  });
+  if (!existing) {
+    throw new AppError("manufacturer not found", 404);
+  }
   const manufacturer = await prisma.manufacturer.update({
     where: { id },
-    data: { name, gstNo, address, email, phone },
+    data: { name, address, email, phone },
   });
 
   return res.json(manufacturer);
 });
 
 const deleteManufacturer = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
   const { id } = req.params;
-  await prisma.manufacturer.delete({ where: { id } });
+  const deleted = await prisma.manufacturer.deleteMany({ where: { id, userId } });
+  if (deleted.count === 0) {
+    throw new AppError("manufacturer not found", 404);
+  }
   return res.status(204).send();
 });
 

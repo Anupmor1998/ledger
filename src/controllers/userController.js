@@ -4,13 +4,18 @@ const asyncHandler = require("../utils/asyncHandler");
 
 const ALLOWED_THEMES = ["light", "dark"];
 
-const listUsers = asyncHandler(async (_req, res) => {
-  const users = await prisma.user.findMany({
-    orderBy: { id: "asc" },
+const listUsers = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
     select: { id: true, email: true, name: true, theme: true, createdAt: true, updatedAt: true },
   });
 
-  return res.json(users);
+  if (!user) {
+    throw new AppError("user not found", 404);
+  }
+
+  return res.json([user]);
 });
 
 const getMyPreferences = asyncHandler(async (req, res) => {

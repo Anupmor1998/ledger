@@ -40,39 +40,51 @@ function formatRate(rate) {
   return numberRate.toFixed(2);
 }
 
-function buildManufacturerMessage(order) {
-  return [
-    `${order.manufacturer.gstNo}`,
-    `${order.manufacturer.name}`,
-    `${order.manufacturer.address}`,
-    `Quality: ${order.quality.name}`,
-    `Qty: ${order.quantity}`,
-    `Rate: ₹ ${formatRate(order.rate)} + GST`,
-    `Order No: ${order.orderNo}`,
-    `Order Date: ${formatDate(order.orderDate)}`,
-    `Customer: ${order.customer.name}`,
-    `Created By: ${order.user.name || order.user.email}`,
-  ].join("\n");
+function resolvePaymentDueDays(order, { addExtraDays = 0 } = {}) {
+  const due = Number(order?.paymentDueOn);
+  if (!Number.isFinite(due) || due < 0) {
+    return "-";
+  }
+  return String(due + addExtraDays);
 }
 
-function buildCustomerMessage(order) {
+function buildCustomerStyleMessage(
+  order,
+  { addExtraPaymentDueDays = 0, includeManufacturerName = true } = {}
+) {
+  const quantityLabel = order.quantityUnit
+    ? `${order.quantity} ${order.quantityUnit}`
+    : `${order.quantity}`;
+  const paymentDueDays = resolvePaymentDueDays(order, {
+    addExtraDays: addExtraPaymentDueDays,
+  });
+
   return [
-    `${order.customer.gstNo}`,
-    `${order.customer.name}`,
-    `${order.customer.address}`,
-    `Quality: ${order.quality.name}`,
-    `Qty: ${order.quantity}`,
-    `Rate: ₹ ${formatRate(order.rate)} + GST`,
-    `Order No: ${order.orderNo}`,
-    `Order Date: ${formatDate(order.orderDate)}`,
-    `Manufacturer: ${order.manufacturer.name}`,
-    `Created By: ${order.user.name || order.user.email}`,
+    "*ORDER CONFIRMATION*",
+    "",
+    `*Party:* ${order.customer.name}`,
+    `*GST:* ${order.customer.gstNo || "-"}`,
+    `*Address:* ${order.customer.address}`,
+    "",
+    "*Order Details*",
+    `- Quality: ${order.quality.name}`,
+    `- Qty: ${quantityLabel}`,
+    `- Rate: Rs. ${formatRate(order.rate)} + GST`,
+    `- Payment Dhara: ${paymentDueDays} days`,
+    "",
+    `*Order No:* ${order.orderNo}`,
+    `*Order Date:* ${formatDate(order.orderDate)}`,
+    ...(includeManufacturerName ? [`*Manufacturer:* ${order.manufacturer.name}`] : []),
+    `*Created By:* ${order.user.name || order.user.email}`,
   ].join("\n");
 }
 
 function buildOrderWhatsAppLinks(order) {
-  const manufacturerMessage = buildManufacturerMessage(order);
-  const customerMessage = buildCustomerMessage(order);
+  const customerMessage = buildCustomerStyleMessage(order);
+  const manufacturerMessage = buildCustomerStyleMessage(order, {
+    addExtraPaymentDueDays: 5,
+    includeManufacturerName: false,
+  });
 
   return {
     manufacturer: buildWhatsAppLink(manufacturerMessage, order.manufacturer?.phone),

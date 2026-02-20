@@ -9,7 +9,7 @@ const {
 } = require("../utils/listQuery");
 
 function validateCustomerPayload(body, { partial = false } = {}) {
-  const requiredFields = ["name", "gstNo", "address", "phone"];
+  const requiredFields = ["name", "address", "phone"];
 
   if (!partial) {
     for (const field of requiredFields) {
@@ -23,6 +23,7 @@ function validateCustomerPayload(body, { partial = false } = {}) {
 }
 
 const createCustomer = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
   const validationError = validateCustomerPayload(req.body);
   if (validationError) {
     throw new AppError(validationError, 400);
@@ -30,7 +31,7 @@ const createCustomer = asyncHandler(async (req, res) => {
 
   const { name, gstNo, address, email, phone } = req.body;
   const customer = await prisma.customer.create({
-    data: { name, gstNo, address, email, phone },
+    data: { userId, name, gstNo, address, email, phone },
   });
   return res.status(201).json(customer);
 });
@@ -38,12 +39,15 @@ const createCustomer = asyncHandler(async (req, res) => {
 const CUSTOMER_SORT_FIELDS = ["name", "gstNo", "email", "phone", "address", "createdAt", "updatedAt"];
 
 const listCustomers = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
   const pagination = parsePagination(req.query);
   const { sortBy, sortOrder } = parseSort(req.query, CUSTOMER_SORT_FIELDS, "createdAt", "desc");
   const search = normalizeSearch(req.query.search);
 
-  const where = search
-    ? {
+  const where = {
+    userId,
+    ...(search
+      ? {
         OR: [
           { name: { contains: search, mode: "insensitive" } },
           { gstNo: { contains: search, mode: "insensitive" } },
@@ -52,7 +56,8 @@ const listCustomers = asyncHandler(async (req, res) => {
           { address: { contains: search, mode: "insensitive" } },
         ],
       }
-    : undefined;
+      : {}),
+  };
 
   const findOptions = {
     where,
@@ -72,8 +77,9 @@ const listCustomers = asyncHandler(async (req, res) => {
 });
 
 const getCustomerById = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
   const { id } = req.params;
-  const customer = await prisma.customer.findUnique({ where: { id } });
+  const customer = await prisma.customer.findFirst({ where: { id, userId } });
 
   if (!customer) {
     throw new AppError("customer not found", 404);
@@ -83,6 +89,7 @@ const getCustomerById = asyncHandler(async (req, res) => {
 });
 
 const updateCustomer = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
   const { id } = req.params;
   const validationError = validateCustomerPayload(req.body, { partial: true });
 
@@ -91,6 +98,10 @@ const updateCustomer = asyncHandler(async (req, res) => {
   }
 
   const { name, gstNo, address, email, phone } = req.body;
+  const existing = await prisma.customer.findFirst({ where: { id, userId }, select: { id: true } });
+  if (!existing) {
+    throw new AppError("customer not found", 404);
+  }
   const customer = await prisma.customer.update({
     where: { id },
     data: { name, gstNo, address, email, phone },
@@ -100,8 +111,12 @@ const updateCustomer = asyncHandler(async (req, res) => {
 });
 
 const deleteCustomer = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
   const { id } = req.params;
-  await prisma.customer.delete({ where: { id } });
+  const deleted = await prisma.customer.deleteMany({ where: { id, userId } });
+  if (deleted.count === 0) {
+    throw new AppError("customer not found", 404);
+  }
   return res.status(204).send();
 });
 

@@ -22,14 +22,13 @@ function buildDateFilter(query) {
   return filter;
 }
 
-function getOrderFilters(query) {
-  const where = {};
+function getOrderFilters(query, userId) {
+  const where = { userId };
   const orderDate = buildDateFilter(query);
   if (orderDate) where.orderDate = orderDate;
   if (query.customerId) where.customerId = query.customerId;
   if (query.manufacturerId) where.manufacturerId = query.manufacturerId;
   if (query.qualityId) where.qualityId = query.qualityId;
-  if (query.userId) where.userId = query.userId;
   return where;
 }
 
@@ -49,9 +48,8 @@ function orderToDetailedRow(order) {
     orderNo: order.orderNo,
     orderDate: formatDate(order.orderDate),
     customerName: order.customer.name,
-    customerGstNo: order.customer.gstNo,
+    customerGstNo: order.customer.gstNo || "",
     manufacturerName: order.manufacturer.name,
-    manufacturerGstNo: order.manufacturer.gstNo,
     quality: order.quality.name,
     quantity,
     rate,
@@ -70,7 +68,7 @@ async function fetchOrders(where) {
 }
 
 const exportOrdersReport = asyncHandler(async (req, res) => {
-  const orders = await fetchOrders(getOrderFilters(req.query));
+  const orders = await fetchOrders(getOrderFilters(req.query, req.user.userId));
   const rows = orders.map(orderToDetailedRow);
 
   await sendWorkbook(res, "orders-report.xlsx", [
@@ -82,7 +80,6 @@ const exportOrdersReport = asyncHandler(async (req, res) => {
         { header: "Customer", key: "customerName" },
         { header: "Customer GST", key: "customerGstNo" },
         { header: "Manufacturer", key: "manufacturerName" },
-        { header: "Manufacturer GST", key: "manufacturerGstNo" },
         { header: "Quality", key: "quality" },
         { header: "Quantity", key: "quantity" },
         { header: "Rate", key: "rate" },
@@ -96,7 +93,7 @@ const exportOrdersReport = asyncHandler(async (req, res) => {
 });
 
 const exportDateRangeSummaryReport = asyncHandler(async (req, res) => {
-  const orders = await fetchOrders(getOrderFilters(req.query));
+  const orders = await fetchOrders(getOrderFilters(req.query, req.user.userId));
   const summaryMap = new Map();
 
   orders.forEach((order) => {
@@ -127,7 +124,7 @@ const exportDateRangeSummaryReport = asyncHandler(async (req, res) => {
   ]);
 });
 
-function groupByEntity(orders, entityKey, gstKeyName, nameKeyName) {
+function groupByEntity(orders, entityKey, nameKeyName, { includeGst = false } = {}) {
   const map = new Map();
   orders.forEach((order) => {
     const entity = order[entityKey];
@@ -137,7 +134,7 @@ function groupByEntity(orders, entityKey, gstKeyName, nameKeyName) {
     const amount = rate * quantity;
     const current = map.get(key) || {
       [nameKeyName]: entity.name,
-      [gstKeyName]: entity.gstNo,
+      ...(includeGst ? { gstNo: entity.gstNo || "" } : {}),
       orders: 0,
       quantity: 0,
       averageRate: 0,
@@ -160,8 +157,8 @@ function groupByEntity(orders, entityKey, gstKeyName, nameKeyName) {
 }
 
 const exportCustomerReport = asyncHandler(async (req, res) => {
-  const orders = await fetchOrders(getOrderFilters(req.query));
-  const rows = groupByEntity(orders, "customer", "gstNo", "customerName");
+  const orders = await fetchOrders(getOrderFilters(req.query, req.user.userId));
+  const rows = groupByEntity(orders, "customer", "customerName", { includeGst: true });
 
   await sendWorkbook(res, "customer-summary.xlsx", [
     {
@@ -180,15 +177,14 @@ const exportCustomerReport = asyncHandler(async (req, res) => {
 });
 
 const exportManufacturerReport = asyncHandler(async (req, res) => {
-  const orders = await fetchOrders(getOrderFilters(req.query));
-  const rows = groupByEntity(orders, "manufacturer", "gstNo", "manufacturerName");
+  const orders = await fetchOrders(getOrderFilters(req.query, req.user.userId));
+  const rows = groupByEntity(orders, "manufacturer", "manufacturerName");
 
   await sendWorkbook(res, "manufacturer-summary.xlsx", [
     {
       name: "Manufacturer Summary",
       columns: [
         { header: "Manufacturer", key: "manufacturerName" },
-        { header: "GST No", key: "gstNo" },
         { header: "Total Orders", key: "orders" },
         { header: "Total Quantity", key: "quantity" },
         { header: "Average Rate", key: "averageRate" },
@@ -200,7 +196,7 @@ const exportManufacturerReport = asyncHandler(async (req, res) => {
 });
 
 const exportQualityReport = asyncHandler(async (req, res) => {
-  const orders = await fetchOrders(getOrderFilters(req.query));
+  const orders = await fetchOrders(getOrderFilters(req.query, req.user.userId));
   const map = new Map();
 
   orders.forEach((order) => {
@@ -243,7 +239,7 @@ const exportQualityReport = asyncHandler(async (req, res) => {
 });
 
 const exportUserActivityReport = asyncHandler(async (req, res) => {
-  const orders = await fetchOrders(getOrderFilters(req.query));
+  const orders = await fetchOrders(getOrderFilters(req.query, req.user.userId));
   const map = new Map();
 
   orders.forEach((order) => {
@@ -282,15 +278,12 @@ const exportUserActivityReport = asyncHandler(async (req, res) => {
 });
 
 const exportGstSummaryReport = asyncHandler(async (req, res) => {
-  const orders = await fetchOrders(getOrderFilters(req.query));
+  const orders = await fetchOrders(getOrderFilters(req.query, req.user.userId));
   const map = new Map();
 
   orders.forEach((order) => {
     const amount = toNumber(order.rate) * toNumber(order.quantity);
-    const entries = [
-      { type: "Customer", name: order.customer.name, gstNo: order.customer.gstNo },
-      { type: "Manufacturer", name: order.manufacturer.name, gstNo: order.manufacturer.gstNo },
-    ];
+    const entries = [{ type: "Customer", name: order.customer.name, gstNo: order.customer.gstNo || "" }];
 
     entries.forEach((entry) => {
       const key = `${entry.type}:${entry.gstNo}`;
@@ -329,7 +322,7 @@ const exportRecentOrdersReport = asyncHandler(async (req, res) => {
   const from = new Date();
   from.setDate(from.getDate() - days);
   const where = {
-    ...getOrderFilters(req.query),
+    ...getOrderFilters(req.query, req.user.userId),
     orderDate: {
       gte: from,
       ...(buildDateFilter(req.query) || {}),
@@ -383,7 +376,7 @@ function topRowsByEntity(orders, entityKey, titleKey, limit = 10) {
 
 const exportTopCustomersReport = asyncHandler(async (req, res) => {
   const limit = Number(req.query.limit || 10);
-  const orders = await fetchOrders(getOrderFilters(req.query));
+  const orders = await fetchOrders(getOrderFilters(req.query, req.user.userId));
   const rows = topRowsByEntity(orders, "customer", "customer", limit);
 
   await sendWorkbook(res, "top-customers.xlsx", [
@@ -402,7 +395,7 @@ const exportTopCustomersReport = asyncHandler(async (req, res) => {
 
 const exportTopManufacturersReport = asyncHandler(async (req, res) => {
   const limit = Number(req.query.limit || 10);
-  const orders = await fetchOrders(getOrderFilters(req.query));
+  const orders = await fetchOrders(getOrderFilters(req.query, req.user.userId));
   const rows = topRowsByEntity(orders, "manufacturer", "manufacturer", limit);
 
   await sendWorkbook(res, "top-manufacturers.xlsx", [
@@ -420,7 +413,7 @@ const exportTopManufacturersReport = asyncHandler(async (req, res) => {
 });
 
 const exportLedgerReport = asyncHandler(async (req, res) => {
-  const orders = await fetchOrders(getOrderFilters(req.query));
+  const orders = await fetchOrders(getOrderFilters(req.query, req.user.userId));
   const rows = orders.map((order) => ({
     voucherDate: formatDate(order.orderDate),
     voucherNo: order.orderNo,

@@ -17,6 +17,7 @@ function validateQualityPayload(body, { partial = false } = {}) {
 }
 
 const createQuality = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
   const validationError = validateQualityPayload(req.body);
   if (validationError) {
     throw new AppError(validationError, 400);
@@ -24,7 +25,7 @@ const createQuality = asyncHandler(async (req, res) => {
 
   const { name } = req.body;
   const quality = await prisma.quality.create({
-    data: { name },
+    data: { userId, name },
   });
   return res.status(201).json(quality);
 });
@@ -32,15 +33,19 @@ const createQuality = asyncHandler(async (req, res) => {
 const QUALITY_SORT_FIELDS = ["name", "createdAt", "updatedAt"];
 
 const listQualities = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
   const pagination = parsePagination(req.query);
   const { sortBy, sortOrder } = parseSort(req.query, QUALITY_SORT_FIELDS, "name", "asc");
   const search = normalizeSearch(req.query.search);
 
-  const where = search
-    ? {
+  const where = {
+    userId,
+    ...(search
+      ? {
         name: { contains: search, mode: "insensitive" },
       }
-    : undefined;
+      : {}),
+  };
 
   const qualities = await prisma.quality.findMany({
     where,
@@ -58,8 +63,9 @@ const listQualities = asyncHandler(async (req, res) => {
 });
 
 const getQualityById = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
   const { id } = req.params;
-  const quality = await prisma.quality.findUnique({ where: { id } });
+  const quality = await prisma.quality.findFirst({ where: { id, userId } });
 
   if (!quality) {
     throw new AppError("quality not found", 404);
@@ -69,6 +75,7 @@ const getQualityById = asyncHandler(async (req, res) => {
 });
 
 const updateQuality = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
   const { id } = req.params;
   const validationError = validateQualityPayload(req.body, { partial: true });
 
@@ -77,6 +84,10 @@ const updateQuality = asyncHandler(async (req, res) => {
   }
 
   const { name } = req.body;
+  const existing = await prisma.quality.findFirst({ where: { id, userId }, select: { id: true } });
+  if (!existing) {
+    throw new AppError("quality not found", 404);
+  }
   const quality = await prisma.quality.update({
     where: { id },
     data: { name },
@@ -86,8 +97,12 @@ const updateQuality = asyncHandler(async (req, res) => {
 });
 
 const deleteQuality = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
   const { id } = req.params;
-  await prisma.quality.delete({ where: { id } });
+  const deleted = await prisma.quality.deleteMany({ where: { id, userId } });
+  if (deleted.count === 0) {
+    throw new AppError("quality not found", 404);
+  }
   return res.status(204).send();
 });
 

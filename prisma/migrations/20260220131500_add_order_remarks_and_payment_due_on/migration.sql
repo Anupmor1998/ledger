@@ -1,0 +1,3 @@
+ALTER TABLE "Order"
+ADD COLUMN "remarks" TEXT,
+ADD COLUMN "paymentDueOn" INTEGER;
