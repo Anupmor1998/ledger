@@ -1,0 +1,10 @@
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'OrderStatus') THEN
+    CREATE TYPE "OrderStatus" AS ENUM ('PENDING', 'COMPLETED', 'CANCELLED');
+  END IF;
+END $$;
+
+ALTER TABLE "Order"
+ADD COLUMN "status" "OrderStatus" NOT NULL DEFAULT 'PENDING',
+ADD COLUMN "processedQuantity" INTEGER NOT NULL DEFAULT 0;

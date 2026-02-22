@@ -76,8 +76,8 @@ function buildCustomerStyleMessage(
     "",
     `*Order No:* ${order.orderNo}`,
     `*Order Date:* ${formatDate(order.orderDate)}`,
-    ...(includeManufacturerName ? [`*Manufacturer:* ${order.manufacturer.name}`] : []),
-    `*Created By:* ${order.user.name || order.user.email}`,
+    ...(includeManufacturerName ? [order.manufacturer.name] : []),
+    order.user.name || order.user.email,
   ].join("\n");
 }
 

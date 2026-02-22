@@ -9,7 +9,7 @@ const {
 } = require("../utils/listQuery");
 
 function validateManufacturerPayload(body, { partial = false } = {}) {
-  const requiredFields = ["name", "address", "phone"];
+  const requiredFields = ["name", "phone"];
 
   if (!partial) {
     for (const field of requiredFields) {
@@ -29,14 +29,15 @@ const createManufacturer = asyncHandler(async (req, res) => {
     throw new AppError(validationError, 400);
   }
 
-  const { name, address, email, phone } = req.body;
+  const { firmName, name, address, email, phone } = req.body;
   const manufacturer = await prisma.manufacturer.create({
-    data: { userId, name, address, email, phone },
+    data: { userId, firmName, name, address, email, phone },
   });
   return res.status(201).json(manufacturer);
 });
 
 const MANUFACTURER_SORT_FIELDS = [
+  "firmName",
   "name",
   "email",
   "phone",
@@ -61,6 +62,7 @@ const listManufacturers = asyncHandler(async (req, res) => {
     ...(search
       ? {
         OR: [
+          { firmName: { contains: search, mode: "insensitive" } },
           { name: { contains: search, mode: "insensitive" } },
           { email: { contains: search, mode: "insensitive" } },
           { phone: { contains: search, mode: "insensitive" } },
@@ -106,7 +108,7 @@ const updateManufacturer = asyncHandler(async (req, res) => {
     throw new AppError(validationError, 400);
   }
 
-  const { name, address, email, phone } = req.body;
+  const { firmName, name, address, email, phone } = req.body;
   const existing = await prisma.manufacturer.findFirst({
     where: { id, userId },
     select: { id: true },
@@ -116,7 +118,7 @@ const updateManufacturer = asyncHandler(async (req, res) => {
   }
   const manufacturer = await prisma.manufacturer.update({
     where: { id },
-    data: { name, address, email, phone },
+    data: { firmName, name, address, email, phone },
   });
 
   return res.json(manufacturer);

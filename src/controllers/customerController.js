@@ -9,7 +9,7 @@ const {
 } = require("../utils/listQuery");
 
 function validateCustomerPayload(body, { partial = false } = {}) {
-  const requiredFields = ["name", "address", "phone"];
+  const requiredFields = ["firmName", "name", "address", "phone"];
 
   if (!partial) {
     for (const field of requiredFields) {
@@ -22,6 +22,49 @@ function validateCustomerPayload(body, { partial = false } = {}) {
   return null;
 }
 
+const COMMISSION_BASE = {
+  PERCENT: "PERCENT",
+  LOT: "LOT",
+};
+
+function buildCommissionData(body) {
+  const commissionBase = String(body.commissionBase || COMMISSION_BASE.PERCENT)
+    .trim()
+    .toUpperCase();
+
+  if (!Object.values(COMMISSION_BASE).includes(commissionBase)) {
+    throw new AppError("commissionBase must be one of: PERCENT, LOT", 400);
+  }
+
+  if (commissionBase === COMMISSION_BASE.PERCENT) {
+    const commissionPercent =
+      body.commissionPercent === undefined || body.commissionPercent === null || body.commissionPercent === ""
+        ? 1
+        : Number(body.commissionPercent);
+
+    if (!Number.isFinite(commissionPercent) || commissionPercent <= 0) {
+      throw new AppError("commissionPercent must be greater than 0", 400);
+    }
+
+    return {
+      commissionBase,
+      commissionPercent,
+      commissionLotRate: null,
+    };
+  }
+
+  const commissionLotRate = Number(body.commissionLotRate);
+  if (!Number.isFinite(commissionLotRate) || commissionLotRate <= 0) {
+    throw new AppError("commissionLotRate must be greater than 0 when commissionBase is LOT", 400);
+  }
+
+  return {
+    commissionBase,
+    commissionPercent: 1,
+    commissionLotRate,
+  };
+}
+
 const createCustomer = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
   const validationError = validateCustomerPayload(req.body);
@@ -29,14 +72,27 @@ const createCustomer = asyncHandler(async (req, res) => {
     throw new AppError(validationError, 400);
   }
 
-  const { name, gstNo, address, email, phone } = req.body;
+  const commissionData = buildCommissionData(req.body);
+  const { firmName, name, gstNo, address, email, phone } = req.body;
   const customer = await prisma.customer.create({
-    data: { userId, name, gstNo, address, email, phone },
+    data: { userId, firmName, name, gstNo, address, email, phone, ...commissionData },
   });
   return res.status(201).json(customer);
 });
 
-const CUSTOMER_SORT_FIELDS = ["name", "gstNo", "email", "phone", "address", "createdAt", "updatedAt"];
+const CUSTOMER_SORT_FIELDS = [
+  "firmName",
+  "name",
+  "gstNo",
+  "email",
+  "phone",
+  "address",
+  "commissionBase",
+  "commissionPercent",
+  "commissionLotRate",
+  "createdAt",
+  "updatedAt",
+];
 
 const listCustomers = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
@@ -49,11 +105,13 @@ const listCustomers = asyncHandler(async (req, res) => {
     ...(search
       ? {
         OR: [
+          { firmName: { contains: search, mode: "insensitive" } },
           { name: { contains: search, mode: "insensitive" } },
           { gstNo: { contains: search, mode: "insensitive" } },
           { email: { contains: search, mode: "insensitive" } },
           { phone: { contains: search, mode: "insensitive" } },
           { address: { contains: search, mode: "insensitive" } },
+          { commissionBase: { equals: search.toUpperCase() } },
         ],
       }
       : {}),
@@ -97,14 +155,30 @@ const updateCustomer = asyncHandler(async (req, res) => {
     throw new AppError(validationError, 400);
   }
 
-  const { name, gstNo, address, email, phone } = req.body;
-  const existing = await prisma.customer.findFirst({ where: { id, userId }, select: { id: true } });
+  const { firmName, name, gstNo, address, email, phone } = req.body;
+  const existing = await prisma.customer.findFirst({
+    where: { id, userId },
+    select: {
+      id: true,
+      commissionBase: true,
+      commissionPercent: true,
+      commissionLotRate: true,
+    },
+  });
   if (!existing) {
     throw new AppError("customer not found", 404);
   }
+
+  const commissionData = buildCommissionData({
+    commissionBase: existing.commissionBase,
+    commissionPercent: existing.commissionPercent,
+    commissionLotRate: existing.commissionLotRate,
+    ...req.body,
+  });
+
   const customer = await prisma.customer.update({
     where: { id },
-    data: { name, gstNo, address, email, phone },
+    data: { firmName, name, gstNo, address, email, phone, ...commissionData },
   });
 
   return res.json(customer);
