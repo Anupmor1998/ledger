@@ -2,6 +2,12 @@ const prisma = require("../config/prisma");
 const asyncHandler = require("../utils/asyncHandler");
 const { sendWorkbook } = require("../utils/reportExcel");
 
+const ORDER_STATUS = {
+  PENDING: "PENDING",
+  COMPLETED: "COMPLETED",
+  CANCELLED: "CANCELLED",
+};
+
 function toNumber(value) {
   const num = Number(value);
   return Number.isFinite(num) ? num : 0;
@@ -41,424 +47,97 @@ function getOrderInclude() {
   };
 }
 
-function orderToDetailedRow(order) {
-  const rate = toNumber(order.rate);
-  const quantity = toNumber(order.quantity);
-  return {
-    orderNo: order.orderNo,
-    orderDate: formatDate(order.orderDate),
-    customerName: order.customer.name,
-    customerGstNo: order.customer.gstNo || "",
-    manufacturerName: order.manufacturer.name,
-    quality: order.quality.name,
-    quantity,
-    rate,
-    amount: quantity * rate,
-    createdBy: order.user.name || order.user.email,
-    createdAt: formatDate(order.createdAt),
-  };
-}
-
 async function fetchOrders(where) {
   return prisma.order.findMany({
     where,
-    orderBy: { orderDate: "desc" },
+    orderBy: [{ orderDate: "desc" }, { orderNo: "desc" }],
     include: getOrderInclude(),
   });
 }
 
-const exportOrdersReport = asyncHandler(async (req, res) => {
-  const orders = await fetchOrders(getOrderFilters(req.query, req.user.userId));
-  const rows = orders.map(orderToDetailedRow);
+const REPORT_COLUMNS = [
+  { header: "Commission Amt", key: "commissionAmt" },
+  { header: "LOT", key: "lot" },
+  { header: "Qulaity", key: "quality" },
+  { header: "Meter", key: "meter" },
+  { header: "Rate", key: "rate" },
+  { header: "Date", key: "date" },
+  { header: "Manufacture Firmname", key: "manufacturerFirmname" },
+  { header: "Manufacturer contact name", key: "manufacturerContactName" },
+];
 
-  await sendWorkbook(res, "orders-report.xlsx", [
-    {
-      name: "Orders",
-      columns: [
-        { header: "Order No", key: "orderNo" },
-        { header: "Order Date", key: "orderDate" },
-        { header: "Customer", key: "customerName" },
-        { header: "Customer GST", key: "customerGstNo" },
-        { header: "Manufacturer", key: "manufacturerName" },
-        { header: "Quality", key: "quality" },
-        { header: "Quantity", key: "quantity" },
-        { header: "Rate", key: "rate" },
-        { header: "Amount", key: "amount" },
-        { header: "Created By", key: "createdBy" },
-        { header: "Created At", key: "createdAt" },
-      ],
-      rows,
-    },
-  ]);
-});
-
-const exportDateRangeSummaryReport = asyncHandler(async (req, res) => {
-  const orders = await fetchOrders(getOrderFilters(req.query, req.user.userId));
-  const summaryMap = new Map();
-
-  orders.forEach((order) => {
-    const date = formatDate(order.orderDate);
-    const rate = toNumber(order.rate);
-    const quantity = toNumber(order.quantity);
-    const amount = rate * quantity;
-    const current = summaryMap.get(date) || { date, orders: 0, quantity: 0, amount: 0 };
-    current.orders += 1;
-    current.quantity += quantity;
-    current.amount += amount;
-    summaryMap.set(date, current);
-  });
-
-  const rows = Array.from(summaryMap.values()).sort((a, b) => a.date.localeCompare(b.date));
-
-  await sendWorkbook(res, "date-range-summary.xlsx", [
-    {
-      name: "Date Summary",
-      columns: [
-        { header: "Date", key: "date" },
-        { header: "Total Orders", key: "orders" },
-        { header: "Total Quantity", key: "quantity" },
-        { header: "Total Amount", key: "amount" },
-      ],
-      rows,
-    },
-  ]);
-});
-
-function groupByEntity(orders, entityKey, nameKeyName, { includeGst = false } = {}) {
-  const map = new Map();
-  orders.forEach((order) => {
-    const entity = order[entityKey];
-    const key = entity.id;
-    const rate = toNumber(order.rate);
-    const quantity = toNumber(order.quantity);
-    const amount = rate * quantity;
-    const current = map.get(key) || {
-      [nameKeyName]: entity.name,
-      ...(includeGst ? { gstNo: entity.gstNo || "" } : {}),
-      orders: 0,
-      quantity: 0,
-      averageRate: 0,
-      amount: 0,
-      _rateTotal: 0,
-    };
-
-    current.orders += 1;
-    current.quantity += quantity;
-    current._rateTotal += rate;
-    current.averageRate = current._rateTotal / current.orders;
-    current.amount += amount;
-    map.set(key, current);
-  });
-
-  return Array.from(map.values()).map((item) => {
-    const { _rateTotal, ...clean } = item;
-    return clean;
-  });
-}
-
-const exportCustomerReport = asyncHandler(async (req, res) => {
-  const orders = await fetchOrders(getOrderFilters(req.query, req.user.userId));
-  const rows = groupByEntity(orders, "customer", "customerName", { includeGst: true });
-
-  await sendWorkbook(res, "customer-summary.xlsx", [
-    {
-      name: "Customer Summary",
-      columns: [
-        { header: "Customer", key: "customerName" },
-        { header: "GST No", key: "gstNo" },
-        { header: "Total Orders", key: "orders" },
-        { header: "Total Quantity", key: "quantity" },
-        { header: "Average Rate", key: "averageRate" },
-        { header: "Total Amount", key: "amount" },
-      ],
-      rows,
-    },
-  ]);
-});
-
-const exportManufacturerReport = asyncHandler(async (req, res) => {
-  const orders = await fetchOrders(getOrderFilters(req.query, req.user.userId));
-  const rows = groupByEntity(orders, "manufacturer", "manufacturerName");
-
-  await sendWorkbook(res, "manufacturer-summary.xlsx", [
-    {
-      name: "Manufacturer Summary",
-      columns: [
-        { header: "Manufacturer", key: "manufacturerName" },
-        { header: "Total Orders", key: "orders" },
-        { header: "Total Quantity", key: "quantity" },
-        { header: "Average Rate", key: "averageRate" },
-        { header: "Total Amount", key: "amount" },
-      ],
-      rows,
-    },
-  ]);
-});
-
-const exportQualityReport = asyncHandler(async (req, res) => {
-  const orders = await fetchOrders(getOrderFilters(req.query, req.user.userId));
-  const map = new Map();
-
-  orders.forEach((order) => {
-    const key = order.quality.id;
-    const rate = toNumber(order.rate);
-    const quantity = toNumber(order.quantity);
-    const amount = rate * quantity;
-    const current = map.get(key) || {
-      quality: order.quality.name,
-      orders: 0,
-      quantity: 0,
-      averageRate: 0,
-      amount: 0,
-      _rateTotal: 0,
-    };
-
-    current.orders += 1;
-    current.quantity += quantity;
-    current._rateTotal += rate;
-    current.averageRate = current._rateTotal / current.orders;
-    current.amount += amount;
-    map.set(key, current);
-  });
-
-  const rows = Array.from(map.values()).map(({ _rateTotal, ...rest }) => rest);
-
-  await sendWorkbook(res, "quality-summary.xlsx", [
-    {
-      name: "Quality Summary",
-      columns: [
-        { header: "Quality", key: "quality" },
-        { header: "Total Orders", key: "orders" },
-        { header: "Total Quantity", key: "quantity" },
-        { header: "Average Rate", key: "averageRate" },
-        { header: "Total Amount", key: "amount" },
-      ],
-      rows,
-    },
-  ]);
-});
-
-const exportUserActivityReport = asyncHandler(async (req, res) => {
-  const orders = await fetchOrders(getOrderFilters(req.query, req.user.userId));
-  const map = new Map();
-
-  orders.forEach((order) => {
-    const key = order.user.id;
-    const rate = toNumber(order.rate);
-    const quantity = toNumber(order.quantity);
-    const amount = rate * quantity;
-    const current = map.get(key) || {
-      userName: order.user.name || order.user.email,
-      userEmail: order.user.email,
-      orders: 0,
-      quantity: 0,
-      amount: 0,
-    };
-    current.orders += 1;
-    current.quantity += quantity;
-    current.amount += amount;
-    map.set(key, current);
-  });
-
-  const rows = Array.from(map.values());
-
-  await sendWorkbook(res, "user-activity.xlsx", [
-    {
-      name: "User Activity",
-      columns: [
-        { header: "User", key: "userName" },
-        { header: "Email", key: "userEmail" },
-        { header: "Total Orders", key: "orders" },
-        { header: "Total Quantity", key: "quantity" },
-        { header: "Total Amount", key: "amount" },
-      ],
-      rows,
-    },
-  ]);
-});
-
-const exportGstSummaryReport = asyncHandler(async (req, res) => {
-  const orders = await fetchOrders(getOrderFilters(req.query, req.user.userId));
-  const map = new Map();
-
-  orders.forEach((order) => {
-    const amount = toNumber(order.rate) * toNumber(order.quantity);
-    const entries = [{ type: "Customer", name: order.customer.name, gstNo: order.customer.gstNo || "" }];
-
-    entries.forEach((entry) => {
-      const key = `${entry.type}:${entry.gstNo}`;
-      const current = map.get(key) || {
-        partyType: entry.type,
-        partyName: entry.name,
-        gstNo: entry.gstNo,
-        orders: 0,
-        amount: 0,
-      };
-      current.orders += 1;
-      current.amount += amount;
-      map.set(key, current);
-    });
-  });
-
-  const rows = Array.from(map.values());
-
-  await sendWorkbook(res, "gst-summary.xlsx", [
-    {
-      name: "GST Summary",
-      columns: [
-        { header: "Type", key: "partyType" },
-        { header: "Name", key: "partyName" },
-        { header: "GST No", key: "gstNo" },
-        { header: "Order Count", key: "orders" },
-        { header: "Total Amount", key: "amount" },
-      ],
-      rows,
-    },
-  ]);
-});
-
-const exportRecentOrdersReport = asyncHandler(async (req, res) => {
-  const days = Number(req.query.days || 7);
-  const from = new Date();
-  from.setDate(from.getDate() - days);
-  const where = {
-    ...getOrderFilters(req.query, req.user.userId),
-    orderDate: {
-      gte: from,
-      ...(buildDateFilter(req.query) || {}),
-    },
-  };
-
-  const orders = await fetchOrders(where);
-  const rows = orders.map(orderToDetailedRow);
-
-  await sendWorkbook(res, "recent-orders.xlsx", [
-    {
-      name: "Recent Orders",
-      columns: [
-        { header: "Order No", key: "orderNo" },
-        { header: "Order Date", key: "orderDate" },
-        { header: "Customer", key: "customerName" },
-        { header: "Manufacturer", key: "manufacturerName" },
-        { header: "Quality", key: "quality" },
-        { header: "Quantity", key: "quantity" },
-        { header: "Rate", key: "rate" },
-        { header: "Amount", key: "amount" },
-      ],
-      rows,
-    },
-  ]);
-});
-
-function topRowsByEntity(orders, entityKey, titleKey, limit = 10) {
-  const map = new Map();
-  orders.forEach((order) => {
-    const entity = order[entityKey];
-    const key = entity.id;
-    const amount = toNumber(order.rate) * toNumber(order.quantity);
-    const quantity = toNumber(order.quantity);
-    const current = map.get(key) || {
-      [titleKey]: entity.name,
-      orders: 0,
-      quantity: 0,
-      amount: 0,
-    };
-    current.orders += 1;
-    current.quantity += quantity;
-    current.amount += amount;
-    map.set(key, current);
-  });
-
-  return Array.from(map.values())
-    .sort((a, b) => b.amount - a.amount)
-    .slice(0, limit);
-}
-
-const exportTopCustomersReport = asyncHandler(async (req, res) => {
-  const limit = Number(req.query.limit || 10);
-  const orders = await fetchOrders(getOrderFilters(req.query, req.user.userId));
-  const rows = topRowsByEntity(orders, "customer", "customer", limit);
-
-  await sendWorkbook(res, "top-customers.xlsx", [
-    {
-      name: "Top Customers",
-      columns: [
-        { header: "Customer", key: "customer" },
-        { header: "Orders", key: "orders" },
-        { header: "Quantity", key: "quantity" },
-        { header: "Amount", key: "amount" },
-      ],
-      rows,
-    },
-  ]);
-});
-
-const exportTopManufacturersReport = asyncHandler(async (req, res) => {
-  const limit = Number(req.query.limit || 10);
-  const orders = await fetchOrders(getOrderFilters(req.query, req.user.userId));
-  const rows = topRowsByEntity(orders, "manufacturer", "manufacturer", limit);
-
-  await sendWorkbook(res, "top-manufacturers.xlsx", [
-    {
-      name: "Top Manufacturers",
-      columns: [
-        { header: "Manufacturer", key: "manufacturer" },
-        { header: "Orders", key: "orders" },
-        { header: "Quantity", key: "quantity" },
-        { header: "Amount", key: "amount" },
-      ],
-      rows,
-    },
-  ]);
-});
-
-const exportLedgerReport = asyncHandler(async (req, res) => {
-  const orders = await fetchOrders(getOrderFilters(req.query, req.user.userId));
-  const rows = orders.map((order) => ({
-    voucherDate: formatDate(order.orderDate),
-    voucherNo: order.orderNo,
-    customer: order.customer.name,
-    manufacturer: order.manufacturer.name,
-    quality: order.quality.name,
-    particulars: `${order.quality.name} (${order.quantity} x ${toNumber(order.rate).toFixed(2)})`,
-    quantity: toNumber(order.quantity),
+function orderToReportRow(order) {
+  return {
+    commissionAmt: toNumber(order.commissionAmount),
+    lot: order.quantityUnit === "LOT" ? toNumber(order.quantity) : "",
+    quality: order.quality?.name || "",
+    // Only show user-entered meter quantity (unit = METER), never random calculated meter.
+    meter: order.quantityUnit === "METER" ? toNumber(order.quantity) : "",
     rate: toNumber(order.rate),
-    debit: toNumber(order.quantity) * toNumber(order.rate),
-    credit: 0,
-    createdBy: order.user.name || order.user.email,
-  }));
+    date: formatDate(order.orderDate),
+    manufacturerFirmname: order.manufacturer?.firmName || "",
+    manufacturerContactName: order.manufacturer?.name || "",
+  };
+}
 
-  await sendWorkbook(res, "ledger-report.xlsx", [
+async function sendStandardReport(res, fileName, orders) {
+  const rows = orders.map(orderToReportRow);
+  await sendWorkbook(res, fileName, [
     {
-      name: "Ledger",
-      columns: [
-        { header: "Date", key: "voucherDate" },
-        { header: "Voucher No", key: "voucherNo" },
-        { header: "Customer", key: "customer" },
-        { header: "Manufacturer", key: "manufacturer" },
-        { header: "Quality", key: "quality" },
-        { header: "Particulars", key: "particulars" },
-        { header: "Quantity", key: "quantity" },
-        { header: "Rate", key: "rate" },
-        { header: "Debit", key: "debit" },
-        { header: "Credit", key: "credit" },
-        { header: "Created By", key: "createdBy" },
-      ],
+      name: "Report",
+      columns: REPORT_COLUMNS,
       rows,
     },
   ]);
+}
+
+function withStatus(where, status) {
+  if (!status) return where;
+  return { ...where, status };
+}
+
+const exportOrderRegisterReport = asyncHandler(async (req, res) => {
+  const orders = await fetchOrders(getOrderFilters(req.query, req.user.userId));
+  await sendStandardReport(res, "order-register.xlsx", orders);
+});
+
+const exportOrderProgressReport = asyncHandler(async (req, res) => {
+  const where = withStatus(getOrderFilters(req.query, req.user.userId), ORDER_STATUS.PENDING);
+  const orders = await fetchOrders(where);
+  await sendStandardReport(res, "order-progress.xlsx", orders);
+});
+
+const exportCompletedSettlementReport = asyncHandler(async (req, res) => {
+  const where = withStatus(getOrderFilters(req.query, req.user.userId), ORDER_STATUS.COMPLETED);
+  const orders = await fetchOrders(where);
+  await sendStandardReport(res, "completed-settlement.xlsx", orders);
+});
+
+const exportCancelledOrdersReport = asyncHandler(async (req, res) => {
+  const where = withStatus(getOrderFilters(req.query, req.user.userId), ORDER_STATUS.CANCELLED);
+  const orders = await fetchOrders(where);
+  await sendStandardReport(res, "cancelled-orders.xlsx", orders);
+});
+
+const exportManufacturerCommissionReport = asyncHandler(async (req, res) => {
+  const where = withStatus(getOrderFilters(req.query, req.user.userId), ORDER_STATUS.COMPLETED);
+  const orders = await fetchOrders(where);
+  const sortedByManufacturer = [...orders].sort((a, b) =>
+    (a.manufacturer?.firmName || a.manufacturer?.name || "").localeCompare(
+      b.manufacturer?.firmName || b.manufacturer?.name || ""
+    )
+  );
+  await sendStandardReport(
+    res,
+    "manufacturer-commission.xlsx",
+    sortedByManufacturer
+  );
 });
 
 module.exports = {
-  exportOrdersReport,
-  exportDateRangeSummaryReport,
-  exportCustomerReport,
-  exportManufacturerReport,
-  exportQualityReport,
-  exportUserActivityReport,
-  exportGstSummaryReport,
-  exportRecentOrdersReport,
-  exportTopCustomersReport,
-  exportTopManufacturersReport,
-  exportLedgerReport,
+  exportOrderRegisterReport,
+  exportOrderProgressReport,
+  exportCompletedSettlementReport,
+  exportCancelledOrdersReport,
+  exportManufacturerCommissionReport,
 };
