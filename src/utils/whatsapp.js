@@ -52,6 +52,8 @@ function buildCustomerStyleMessage(
   order,
   { addExtraPaymentDueDays = 0, includeManufacturerName = true } = {}
 ) {
+  const customerDisplay = order.customer?.firmName || order.customer?.name || "-";
+  const manufacturerContact = order.manufacturer?.name || "-";
   const quantityLabel = order.quantityUnit
     ? `${order.quantity} ${order.quantityUnit}`
     : `${order.quantity}`;
@@ -63,7 +65,7 @@ function buildCustomerStyleMessage(
   return [
     "*ORDER CONFIRMATION*",
     "",
-    `*Party:* ${order.customer.name}`,
+    `*Party:* ${customerDisplay}`,
     `*GST:* ${order.customer.gstNo || "-"}`,
     `*Address:* ${order.customer.address}`,
     "",
@@ -76,7 +78,7 @@ function buildCustomerStyleMessage(
     "",
     `*Order No:* ${order.orderNo}`,
     `*Order Date:* ${formatDate(order.orderDate)}`,
-    ...(includeManufacturerName ? [order.manufacturer.name] : []),
+    ...(includeManufacturerName ? [manufacturerContact] : []),
     order.user.name || order.user.email,
   ].join("\n");
 }
