@@ -1,0 +1,40 @@
+name: Daily DB Backup To Google Drive
+
+on:
+  schedule:
+    # 11:30 PM IST = 18:00 UTC
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install backup dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client rclone
+
+      - name: Prepare service account credentials
+        run: |
+          echo "${GDRIVE_SERVICE_ACCOUNT_JSON}" > /tmp/gdrive-service-account.json
+          chmod 600 /tmp/gdrive-service-account.json
+        env:
+          GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
+
+      - name: Run database backup
+        run: |
+          chmod +x scripts/backup-to-gdrive.sh
+          scripts/backup-to-gdrive.sh
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_BACKUP }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          GDRIVE_SERVICE_ACCOUNT_FILE: /tmp/gdrive-service-account.json
+          GDRIVE_SUBDIR: ledger-server
+          RETENTION_DAYS: "30"
+          DB_NAME: ledger
