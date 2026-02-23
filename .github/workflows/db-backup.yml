@@ -33,10 +33,16 @@ jobs:
 
       - name: Prepare service account credentials
         run: |
-          echo "${GDRIVE_SERVICE_ACCOUNT_JSON}" > /tmp/gdrive-service-account.json
+          if [ -n "${GDRIVE_SERVICE_ACCOUNT_JSON_BASE64}" ]; then
+            echo "${GDRIVE_SERVICE_ACCOUNT_JSON_BASE64}" | base64 --decode > /tmp/gdrive-service-account.json
+          else
+            printf '%s' "${GDRIVE_SERVICE_ACCOUNT_JSON}" > /tmp/gdrive-service-account.json
+          fi
+          python3 -m json.tool /tmp/gdrive-service-account.json > /dev/null
           chmod 600 /tmp/gdrive-service-account.json
         env:
           GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
+          GDRIVE_SERVICE_ACCOUNT_JSON_BASE64: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON_BASE64 }}
 
       - name: Run database backup
         run: |
