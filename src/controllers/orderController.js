@@ -1,7 +1,7 @@
 const prisma = require("../config/prisma");
 const AppError = require("../utils/appError");
 const asyncHandler = require("../utils/asyncHandler");
-const { buildOrderWhatsAppLinks } = require("../utils/whatsapp");
+const { buildOrderWhatsAppLinks, buildOrderWhatsAppMessages } = require("../utils/whatsapp");
 const {
   buildPaginatedResponse,
   normalizeSearch,
@@ -27,6 +27,7 @@ function normalizeOrder(order) {
     meter: order.meter === null ? null : Number(order.meter),
     commissionAmount: order.commissionAmount === null ? null : Number(order.commissionAmount),
     progressCommissionAmount,
+    whatsappMessages: buildOrderWhatsAppMessages(order),
     whatsappLinks: buildOrderWhatsAppLinks(order),
   };
 }

@@ -5,6 +5,8 @@ const asyncHandler = require("../utils/asyncHandler");
 
 const ALLOWED_THEMES = ["light", "dark"];
 const SALT_ROUNDS = 10;
+const WHATSAPP_GROUP_INVITE_REGEX =
+  /^https:\/\/chat\.whatsapp\.com\/[A-Za-z0-9]+(?:\?.*)?$/i;
 
 const listUsers = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
@@ -115,9 +117,93 @@ const updateMyProfile = asyncHandler(async (req, res) => {
   return res.json(updated);
 });
 
+const listMyWhatsAppGroups = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+  const groups = await prisma.whatsAppGroup.findMany({
+    where: { userId },
+    orderBy: { createdAt: "asc" },
+  });
+  return res.json(groups);
+});
+
+const createMyWhatsAppGroup = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+  const name = String(req.body?.name || "").trim();
+  const inviteLink = String(req.body?.inviteLink || "").trim();
+
+  if (!name) {
+    throw new AppError("name is required", 400);
+  }
+  if (!inviteLink || !WHATSAPP_GROUP_INVITE_REGEX.test(inviteLink)) {
+    throw new AppError("inviteLink must be a valid WhatsApp group link", 400);
+  }
+
+  const created = await prisma.whatsAppGroup.create({
+    data: { userId, name, inviteLink },
+  });
+  return res.status(201).json(created);
+});
+
+const updateMyWhatsAppGroup = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+  const { id } = req.params;
+  const hasName = req.body?.name !== undefined;
+  const hasInviteLink = req.body?.inviteLink !== undefined;
+
+  if (!hasName && !hasInviteLink) {
+    throw new AppError("at least one field is required", 400);
+  }
+
+  const existing = await prisma.whatsAppGroup.findFirst({
+    where: { id, userId },
+    select: { id: true },
+  });
+  if (!existing) {
+    throw new AppError("whatsapp group not found", 404);
+  }
+
+  const data = {};
+  if (hasName) {
+    const name = String(req.body.name || "").trim();
+    if (!name) {
+      throw new AppError("name cannot be empty", 400);
+    }
+    data.name = name;
+  }
+  if (hasInviteLink) {
+    const inviteLink = String(req.body.inviteLink || "").trim();
+    if (!inviteLink || !WHATSAPP_GROUP_INVITE_REGEX.test(inviteLink)) {
+      throw new AppError("inviteLink must be a valid WhatsApp group link", 400);
+    }
+    data.inviteLink = inviteLink;
+  }
+
+  const updated = await prisma.whatsAppGroup.update({
+    where: { id },
+    data,
+  });
+  return res.json(updated);
+});
+
+const deleteMyWhatsAppGroup = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+  const { id } = req.params;
+  const deleted = await prisma.whatsAppGroup.deleteMany({
+    where: { id, userId },
+  });
+  if (deleted.count === 0) {
+    throw new AppError("whatsapp group not found", 404);
+  }
+  return res.status(204).send();
+});
+
 module.exports = {
   listUsers,
   getMyPreferences,
   updateMyPreferences,
   updateMyProfile,
+  listMyWhatsAppGroups,
+  createMyWhatsAppGroup,
+  updateMyWhatsAppGroup,
+  deleteMyWhatsAppGroup,
 };

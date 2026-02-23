@@ -84,6 +84,15 @@ function buildCustomerStyleMessage(
 }
 
 function buildOrderWhatsAppLinks(order) {
+  const messages = buildOrderWhatsAppMessages(order);
+
+  return {
+    manufacturer: buildWhatsAppLink(messages.manufacturer, order.manufacturer?.phone),
+    customer: buildWhatsAppLink(messages.customer, order.customer?.phone),
+  };
+}
+
+function buildOrderWhatsAppMessages(order) {
   const customerMessage = buildCustomerStyleMessage(order);
   const manufacturerMessage = buildCustomerStyleMessage(order, {
     addExtraPaymentDueDays: 5,
@@ -91,11 +100,12 @@ function buildOrderWhatsAppLinks(order) {
   });
 
   return {
-    manufacturer: buildWhatsAppLink(manufacturerMessage, order.manufacturer?.phone),
-    customer: buildWhatsAppLink(customerMessage, order.customer?.phone),
+    manufacturer: manufacturerMessage,
+    customer: customerMessage,
   };
 }
 
 module.exports = {
   buildOrderWhatsAppLinks,
+  buildOrderWhatsAppMessages,
 };
