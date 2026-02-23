@@ -19,7 +19,9 @@ RCLONE_CONFIG_FILE="${RCLONE_CONFIG_FILE:-$(mktemp)}"
 
 mkdir -p "${BACKUP_DIR}"
 
-if [[ -n "${RCLONE_CONFIG_BASE64:-}" ]]; then
+if [[ -s "${RCLONE_CONFIG_FILE}" ]]; then
+  :
+elif [[ -n "${RCLONE_CONFIG_BASE64:-}" ]]; then
   echo "${RCLONE_CONFIG_BASE64}" | base64 --decode > "${RCLONE_CONFIG_FILE}"
 elif [[ -n "${RCLONE_CONFIG_CONTENT:-}" ]]; then
   printf '%s' "${RCLONE_CONFIG_CONTENT}" > "${RCLONE_CONFIG_FILE}"
