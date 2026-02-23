@@ -20,6 +20,7 @@ BACKUP_DIR="${BACKUP_DIR:-./backups}"
 GDRIVE_REMOTE_NAME="${GDRIVE_REMOTE_NAME:-gdrive}"
 GDRIVE_SUBDIR="${GDRIVE_SUBDIR:-ledger-server}"
 RETENTION_DAYS="${RETENTION_DAYS:-30}"
+PG_DUMP_BIN="${PG_DUMP_BIN:-pg_dump}"
 TIMESTAMP="$(date -u +'%Y%m%d_%H%M%S')"
 DB_NAME="${DB_NAME:-ledger}"
 BACKUP_FILE="${BACKUP_DIR}/${DB_NAME}_${TIMESTAMP}.dump"
@@ -42,7 +43,8 @@ cleanup() {
 trap cleanup EXIT
 
 echo "Starting PostgreSQL backup..."
-pg_dump \
+"${PG_DUMP_BIN}" --version
+"${PG_DUMP_BIN}" \
   --dbname="${DATABASE_URL}" \
   --format=custom \
   --file="${BACKUP_FILE}" \
