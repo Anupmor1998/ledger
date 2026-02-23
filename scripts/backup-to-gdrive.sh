@@ -6,16 +6,6 @@ if [[ -z "${DATABASE_URL:-}" ]]; then
   exit 1
 fi
 
-if [[ -z "${GDRIVE_FOLDER_ID:-}" ]]; then
-  echo "GDRIVE_FOLDER_ID is required"
-  exit 1
-fi
-
-if [[ -z "${GDRIVE_SERVICE_ACCOUNT_FILE:-}" ]]; then
-  echo "GDRIVE_SERVICE_ACCOUNT_FILE is required"
-  exit 1
-fi
-
 BACKUP_DIR="${BACKUP_DIR:-./backups}"
 GDRIVE_REMOTE_NAME="${GDRIVE_REMOTE_NAME:-gdrive}"
 GDRIVE_SUBDIR="${GDRIVE_SUBDIR:-ledger-server}"
@@ -25,20 +15,31 @@ TIMESTAMP="$(date -u +'%Y%m%d_%H%M%S')"
 DB_NAME="${DB_NAME:-ledger}"
 BACKUP_FILE="${BACKUP_DIR}/${DB_NAME}_${TIMESTAMP}.dump"
 CHECKSUM_FILE="${BACKUP_FILE}.sha256"
-RCLONE_CONFIG_FILE="$(mktemp)"
+RCLONE_CONFIG_FILE="${RCLONE_CONFIG_FILE:-$(mktemp)}"
 
 mkdir -p "${BACKUP_DIR}"
 
-cat > "${RCLONE_CONFIG_FILE}" <<EOF
+if [[ -n "${RCLONE_CONFIG_BASE64:-}" ]]; then
+  echo "${RCLONE_CONFIG_BASE64}" | base64 --decode > "${RCLONE_CONFIG_FILE}"
+elif [[ -n "${RCLONE_CONFIG_CONTENT:-}" ]]; then
+  printf '%s' "${RCLONE_CONFIG_CONTENT}" > "${RCLONE_CONFIG_FILE}"
+elif [[ -n "${GDRIVE_SERVICE_ACCOUNT_FILE:-}" && -n "${GDRIVE_FOLDER_ID:-}" ]]; then
+  cat > "${RCLONE_CONFIG_FILE}" <<EOF
 [${GDRIVE_REMOTE_NAME}]
 type = drive
 scope = drive.file
 service_account_file = ${GDRIVE_SERVICE_ACCOUNT_FILE}
 root_folder_id = ${GDRIVE_FOLDER_ID}
 EOF
+else
+  echo "Provide either RCLONE_CONFIG_BASE64 / RCLONE_CONFIG_CONTENT, or GDRIVE_SERVICE_ACCOUNT_FILE + GDRIVE_FOLDER_ID."
+  exit 1
+fi
 
 cleanup() {
-  rm -f "${RCLONE_CONFIG_FILE}"
+  if [[ "${RCLONE_CONFIG_FILE}" == /tmp/* ]]; then
+    rm -f "${RCLONE_CONFIG_FILE}"
+  fi
 }
 trap cleanup EXIT
 

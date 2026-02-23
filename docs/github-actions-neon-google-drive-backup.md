@@ -14,26 +14,27 @@ Required GitHub secrets
 1) `DATABASE_URL_BACKUP`
 - Neon connection string used for backup.
 
-2) `GDRIVE_SERVICE_ACCOUNT_JSON`
-- Full JSON content of Google Cloud service account key.
+2) `RCLONE_CONFIG_BASE64`
+- Base64 value of your `rclone` config file for Google Drive OAuth (personal account).
+- This avoids service-account quota limitations for personal Drive.
 
-3) `GDRIVE_FOLDER_ID`
-- Google Drive folder ID where backups should be uploaded.
-- This is not the full share URL. It is the folder ID part.
+How to create `RCLONE_CONFIG_BASE64`
+1) Install rclone locally and run:
+   `rclone config`
+2) Create remote named `gdrive` with type `drive`.
+3) Complete OAuth login in browser.
+4) Find config file path using:
+   `rclone config file`
+5) Encode config file:
+   Linux: `base64 -w 0 ~/.config/rclone/rclone.conf`
+   macOS: `base64 ~/.config/rclone/rclone.conf | tr -d '\n'`
+6) Save encoded output into GitHub secret `RCLONE_CONFIG_BASE64`.
 
-How to get Google Drive folder ID
-- From a folder URL like:
-  `https://drive.google.com/drive/folders/1AbCdEfGh...xyz`
-- Folder ID is:
-  `1AbCdEfGh...xyz`
-
-Google setup checklist
-1) Create a Google Cloud project.
-2) Enable Google Drive API.
-3) Create a service account.
-4) Create/download service account JSON key.
-5) Share your target Drive folder with the service account email (Editor access).
-6) Save the JSON and folder ID into GitHub Secrets.
+Google setup checklist (OAuth path)
+1) Create Google Drive folder for backups.
+2) Configure `rclone` with your Google account.
+3) Put encoded rclone config into `RCLONE_CONFIG_BASE64`.
+4) Keep `DATABASE_URL_BACKUP` updated.
 
 Manual run
 - GitHub -> Actions -> "Daily DB Backup To Google Drive" -> Run workflow.

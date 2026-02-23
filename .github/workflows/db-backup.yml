@@ -31,18 +31,13 @@ jobs:
           pg_dump --version || true
           /usr/lib/postgresql/17/bin/pg_dump --version
 
-      - name: Prepare service account credentials
+      - name: Prepare rclone config
         run: |
-          if [ -n "${GDRIVE_SERVICE_ACCOUNT_JSON_BASE64}" ]; then
-            echo "${GDRIVE_SERVICE_ACCOUNT_JSON_BASE64}" | base64 --decode > /tmp/gdrive-service-account.json
-          else
-            printf '%s' "${GDRIVE_SERVICE_ACCOUNT_JSON}" > /tmp/gdrive-service-account.json
-          fi
-          python3 -m json.tool /tmp/gdrive-service-account.json > /dev/null
-          chmod 600 /tmp/gdrive-service-account.json
+          echo "${RCLONE_CONFIG_BASE64}" | base64 --decode > /tmp/rclone.conf
+          chmod 600 /tmp/rclone.conf
+          grep -n "type *= *drive" /tmp/rclone.conf
         env:
-          GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
-          GDRIVE_SERVICE_ACCOUNT_JSON_BASE64: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON_BASE64 }}
+          RCLONE_CONFIG_BASE64: ${{ secrets.RCLONE_CONFIG_BASE64 }}
 
       - name: Run database backup
         run: |
@@ -50,9 +45,8 @@ jobs:
           scripts/backup-to-gdrive.sh
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL_BACKUP }}
-          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
-          GDRIVE_SERVICE_ACCOUNT_FILE: /tmp/gdrive-service-account.json
           GDRIVE_SUBDIR: ledger-server
           RETENTION_DAYS: "30"
           DB_NAME: ledger
           PG_DUMP_BIN: /usr/lib/postgresql/17/bin/pg_dump
+          RCLONE_CONFIG_FILE: /tmp/rclone.conf
