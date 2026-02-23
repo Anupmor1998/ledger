@@ -12,7 +12,6 @@ model User {
   name                String?
   password            String
   theme               String               @default("light")
-  orderCounter        Int                  @default(0)
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
   customers           Customer[]
@@ -100,6 +99,7 @@ model Order {
   commissionAmount Decimal?   @db.Decimal(12, 2)
   remarks        String?
   paymentDueOn   Int?
+  fyStartYear    Int
   orderNo        Int
   orderDate      DateTime
   createdAt      DateTime     @default(now())
@@ -110,10 +110,11 @@ model Order {
   quality        Quality      @relation(fields: [qualityId], references: [id], onDelete: Restrict)
 
   @@index([userId])
+  @@index([userId, fyStartYear])
   @@index([customerId])
   @@index([manufacturerId])
   @@index([qualityId])
-  @@unique([userId, orderNo])
+  @@unique([userId, fyStartYear, orderNo])
 }
 
 enum QuantityUnit {

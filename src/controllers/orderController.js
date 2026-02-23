@@ -46,6 +46,8 @@ const LOT_MIN_METERS = 1450;
 const LOT_MAX_METERS = 1550;
 const GST_RATE = 0.05;
 const DEFAULT_COMMISSION_PERCENT = 1;
+const INDIA_TIME_ZONE = "Asia/Kolkata";
+const ORDER_NO_RETRY_LIMIT = 3;
 
 function getRandomLotMeters() {
   return LOT_MIN_METERS + Math.random() * (LOT_MAX_METERS - LOT_MIN_METERS);
@@ -53,6 +55,54 @@ function getRandomLotMeters() {
 
 function round2(value) {
   return Math.round(value * 100) / 100;
+}
+
+function parseOrderDateOrThrow(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new AppError("orderDate is invalid", 400);
+  }
+  return date;
+}
+
+function getFinancialYearStartYear(dateValue) {
+  const date = parseOrderDateOrThrow(dateValue);
+  const formatter = new Intl.DateTimeFormat("en-IN", {
+    timeZone: INDIA_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+  });
+  const parts = formatter.formatToParts(date);
+  const year = Number(parts.find((part) => part.type === "year")?.value);
+  const month = Number(parts.find((part) => part.type === "month")?.value);
+
+  if (!Number.isFinite(year) || !Number.isFinite(month)) {
+    throw new AppError("unable to derive financial year from orderDate", 400);
+  }
+
+  return month >= 4 ? year : year - 1;
+}
+
+async function getNextOrderNo(tx, userId, fyStartYear) {
+  const lastOrder = await tx.order.findFirst({
+    where: { userId, fyStartYear },
+    orderBy: { orderNo: "desc" },
+    select: { orderNo: true },
+  });
+  return (lastOrder?.orderNo || 0) + 1;
+}
+
+function isOrderNoUniqueConflict(error) {
+  if (error?.code !== "P2002") return false;
+  const target = error?.meta?.target;
+  if (Array.isArray(target)) {
+    return (
+      target.includes("userId") &&
+      target.includes("fyStartYear") &&
+      target.includes("orderNo")
+    );
+  }
+  return String(target || "").includes("Order_userId_fyStartYear_orderNo_key");
 }
 
 function toMeterFromQuantity({ quantity, quantityUnit, lotMeters }) {
@@ -185,62 +235,73 @@ const createOrder = asyncHandler(async (req, res) => {
     throw new AppError("paymentDueOn must be a whole number of days and cannot be negative", 400);
   }
 
-  const order = await prisma.$transaction(async (tx) => {
-    const [customer, manufacturer] = await Promise.all([
-      tx.customer.findFirst({
-        where: { id: customerId, userId },
-        select: {
-          id: true,
-          commissionBase: true,
-          commissionPercent: true,
-          commissionLotRate: true,
-        },
-      }),
-      tx.manufacturer.findFirst({ where: { id: manufacturerId, userId }, select: { id: true } }),
-    ]);
+  const parsedOrderDate = parseOrderDateOrThrow(orderDate);
+  const fyStartYear = getFinancialYearStartYear(parsedOrderDate);
+  let order;
 
-    if (!customer) {
-      throw new AppError("customer not found", 404);
+  for (let attempt = 0; attempt < ORDER_NO_RETRY_LIMIT; attempt += 1) {
+    try {
+      order = await prisma.$transaction(async (tx) => {
+        const [customer, manufacturer] = await Promise.all([
+          tx.customer.findFirst({
+            where: { id: customerId, userId },
+            select: {
+              id: true,
+              commissionBase: true,
+              commissionPercent: true,
+              commissionLotRate: true,
+            },
+          }),
+          tx.manufacturer.findFirst({ where: { id: manufacturerId, userId }, select: { id: true } }),
+        ]);
+
+        if (!customer) {
+          throw new AppError("customer not found", 404);
+        }
+        if (!manufacturer) {
+          throw new AppError("manufacturer not found", 404);
+        }
+
+        const qualityId = await resolveQualityId(tx, userId, qualityName);
+        const amountData = computeOrderAmounts(Number(quantity), Number(rate), quantityUnit, customer);
+        const nextOrderNo = await getNextOrderNo(tx, userId, fyStartYear);
+
+        return tx.order.create({
+          data: {
+            userId,
+            fyStartYear,
+            orderNo: nextOrderNo,
+            customerId,
+            manufacturerId,
+            qualityId,
+            rate,
+            quantity: Number(quantity),
+            processedQuantity: 0,
+            status: ORDER_STATUS.PENDING,
+            quantityUnit: amountData.quantityUnit,
+            lotMeters: amountData.lotMeters,
+            meter: amountData.meter,
+            commissionAmount: amountData.commissionAmount,
+            remarks: remarks?.trim() || null,
+            paymentDueOn: paymentDueOn !== undefined ? Number(paymentDueOn) : null,
+            orderDate: parsedOrderDate,
+          },
+          include: {
+            user: { select: { id: true, name: true, email: true } },
+            customer: true,
+            manufacturer: true,
+            quality: true,
+          },
+        });
+      });
+      break;
+    } catch (error) {
+      if (isOrderNoUniqueConflict(error) && attempt < ORDER_NO_RETRY_LIMIT - 1) {
+        continue;
+      }
+      throw error;
     }
-    if (!manufacturer) {
-      throw new AppError("manufacturer not found", 404);
-    }
-
-    const qualityId = await resolveQualityId(tx, userId, qualityName);
-    const amountData = computeOrderAmounts(Number(quantity), Number(rate), quantityUnit, customer);
-    const userCounter = await tx.user.update({
-      where: { id: userId },
-      data: { orderCounter: { increment: 1 } },
-      select: { orderCounter: true },
-    });
-
-    return tx.order.create({
-      data: {
-        userId,
-        orderNo: userCounter.orderCounter,
-        customerId,
-        manufacturerId,
-        qualityId,
-        rate,
-        quantity: Number(quantity),
-        processedQuantity: 0,
-        status: ORDER_STATUS.PENDING,
-        quantityUnit: amountData.quantityUnit,
-        lotMeters: amountData.lotMeters,
-        meter: amountData.meter,
-        commissionAmount: amountData.commissionAmount,
-        remarks: remarks?.trim() || null,
-        paymentDueOn: paymentDueOn !== undefined ? Number(paymentDueOn) : null,
-        orderDate: new Date(orderDate),
-      },
-      include: {
-        user: { select: { id: true, name: true, email: true } },
-        customer: true,
-        manufacturer: true,
-        quality: true,
-      },
-    });
-  });
+  }
 
   return res.status(201).json(normalizeOrder(order));
 });
@@ -459,178 +520,197 @@ const updateOrder = asyncHandler(async (req, res) => {
     throw new AppError("status must be one of: PENDING, COMPLETED, CANCELLED", 400);
   }
 
-  const order = await prisma.$transaction(async (tx) => {
-    const existing = await tx.order.findFirst({
-      where: { id, userId },
-      select: {
-        id: true,
-        manufacturerId: true,
-        quantity: true,
-        processedQuantity: true,
-        status: true,
-      },
-    });
-    if (!existing) {
-      throw new AppError("order not found", 404);
-    }
+  let order;
+  for (let attempt = 0; attempt < ORDER_NO_RETRY_LIMIT; attempt += 1) {
+    try {
+      order = await prisma.$transaction(async (tx) => {
+        const existing = await tx.order.findFirst({
+          where: { id, userId },
+          select: {
+            id: true,
+            manufacturerId: true,
+            quantity: true,
+            processedQuantity: true,
+            status: true,
+            fyStartYear: true,
+          },
+        });
+        if (!existing) {
+          throw new AppError("order not found", 404);
+        }
 
-    const updateData = {};
-    let customerForCommission = null;
+        const updateData = {};
+        let customerForCommission = null;
 
-    if (customerId !== undefined) {
-      const customer = await tx.customer.findFirst({
-        where: { id: customerId, userId },
-        select: {
-          id: true,
-          commissionBase: true,
-          commissionPercent: true,
-          commissionLotRate: true,
-        },
-      });
-      if (!customer) {
-        throw new AppError("customer not found", 404);
-      }
-      updateData.customerId = customerId;
-      customerForCommission = customer;
-    }
-    if (manufacturerId !== undefined) {
-      const manufacturer = await tx.manufacturer.findFirst({
-        where: { id: manufacturerId, userId },
-        select: { id: true },
-      });
-      if (!manufacturer) {
-        throw new AppError("manufacturer not found", 404);
-      }
-      updateData.manufacturerId = manufacturerId;
-    }
-    if (manufacturerFirmName !== undefined) {
-      const firmName = String(manufacturerFirmName || "").trim();
-      await tx.manufacturer.update({
-        where: { id: existing.manufacturerId },
-        data: { firmName: firmName || null },
-      });
-    }
-    if (rate !== undefined) {
-      updateData.rate = rate;
-    }
-    if (quantity !== undefined) {
-      updateData.quantity = Number(quantity);
-    }
-    if (orderDate !== undefined) {
-      updateData.orderDate = new Date(orderDate);
-    }
-    if (qualityName !== undefined) {
-      updateData.qualityId = await resolveQualityId(tx, userId, qualityName);
-    }
-    if (remarks !== undefined) {
-      updateData.remarks = remarks?.trim() || null;
-    }
-    if (paymentDueOn !== undefined) {
-      updateData.paymentDueOn = paymentDueOn === null ? null : Number(paymentDueOn);
-    }
-    if (processedQuantity !== undefined) {
-      const normalizedProcessedQuantity = Number(processedQuantity);
-      updateData.processedQuantity = normalizedProcessedQuantity;
-    }
-    if (processedQuantityAdd !== undefined) {
-      const normalizedProcessedQuantityAdd = Number(processedQuantityAdd);
-      updateData.processedQuantity =
-        Number(existing.processedQuantity) + normalizedProcessedQuantityAdd;
-    }
-    if (status !== undefined) {
-      updateData.status = String(status).toUpperCase();
-    }
-
-    const shouldRecalculateAmounts =
-      rate !== undefined || quantity !== undefined || quantityUnit !== undefined || customerId !== undefined;
-    if (shouldRecalculateAmounts) {
-      const currentOrder = await tx.order.findFirst({
-        where: { id, userId },
-        select: {
-          rate: true,
-          quantity: true,
-          quantityUnit: true,
-          customer: {
+        if (customerId !== undefined) {
+          const customer = await tx.customer.findFirst({
+            where: { id: customerId, userId },
             select: {
+              id: true,
               commissionBase: true,
               commissionPercent: true,
               commissionLotRate: true,
             },
-          },
-        },
-      });
-      if (!currentOrder) {
-        throw new AppError("order not found", 404);
-      }
-      const commissionConfig = customerForCommission || currentOrder.customer;
-      const amountData = computeOrderAmounts(
-        quantity !== undefined ? Number(quantity) : Number(currentOrder.quantity),
-        rate !== undefined ? Number(rate) : Number(currentOrder.rate),
-        quantityUnit !== undefined ? quantityUnit : currentOrder.quantityUnit,
-        commissionConfig
-      );
-      updateData.quantityUnit = amountData.quantityUnit;
-      updateData.lotMeters = amountData.lotMeters;
-      updateData.meter = amountData.meter;
-      updateData.commissionAmount = amountData.commissionAmount;
-    }
+          });
+          if (!customer) {
+            throw new AppError("customer not found", 404);
+          }
+          updateData.customerId = customerId;
+          customerForCommission = customer;
+        }
+        if (manufacturerId !== undefined) {
+          const manufacturer = await tx.manufacturer.findFirst({
+            where: { id: manufacturerId, userId },
+            select: { id: true },
+          });
+          if (!manufacturer) {
+            throw new AppError("manufacturer not found", 404);
+          }
+          updateData.manufacturerId = manufacturerId;
+        }
+        if (manufacturerFirmName !== undefined) {
+          const firmName = String(manufacturerFirmName || "").trim();
+          await tx.manufacturer.update({
+            where: { id: existing.manufacturerId },
+            data: { firmName: firmName || null },
+          });
+        }
+        if (rate !== undefined) {
+          updateData.rate = rate;
+        }
+        if (quantity !== undefined) {
+          updateData.quantity = Number(quantity);
+        }
+        if (orderDate !== undefined) {
+          const parsedOrderDate = parseOrderDateOrThrow(orderDate);
+          const nextFyStartYear = getFinancialYearStartYear(parsedOrderDate);
+          updateData.orderDate = parsedOrderDate;
 
-    const shouldFinalizeCommission =
-      updateData.status === ORDER_STATUS.COMPLETED ||
-      (processedQuantity !== undefined && existing.status === ORDER_STATUS.COMPLETED);
-    const shouldFinalizeCommissionFromAdd =
-      processedQuantityAdd !== undefined && existing.status === ORDER_STATUS.COMPLETED;
-    if (shouldFinalizeCommission || shouldFinalizeCommissionFromAdd) {
-      const orderSnapshot = await tx.order.findFirst({
-        where: { id, userId },
-        select: {
-          rate: true,
-          quantityUnit: true,
-          lotMeters: true,
-          processedQuantity: true,
-          customer: {
+          if (nextFyStartYear !== existing.fyStartYear) {
+            updateData.fyStartYear = nextFyStartYear;
+            updateData.orderNo = await getNextOrderNo(tx, userId, nextFyStartYear);
+          }
+        }
+        if (qualityName !== undefined) {
+          updateData.qualityId = await resolveQualityId(tx, userId, qualityName);
+        }
+        if (remarks !== undefined) {
+          updateData.remarks = remarks?.trim() || null;
+        }
+        if (paymentDueOn !== undefined) {
+          updateData.paymentDueOn = paymentDueOn === null ? null : Number(paymentDueOn);
+        }
+        if (processedQuantity !== undefined) {
+          const normalizedProcessedQuantity = Number(processedQuantity);
+          updateData.processedQuantity = normalizedProcessedQuantity;
+        }
+        if (processedQuantityAdd !== undefined) {
+          const normalizedProcessedQuantityAdd = Number(processedQuantityAdd);
+          updateData.processedQuantity =
+            Number(existing.processedQuantity) + normalizedProcessedQuantityAdd;
+        }
+        if (status !== undefined) {
+          updateData.status = String(status).toUpperCase();
+        }
+
+        const shouldRecalculateAmounts =
+          rate !== undefined || quantity !== undefined || quantityUnit !== undefined || customerId !== undefined;
+        if (shouldRecalculateAmounts) {
+          const currentOrder = await tx.order.findFirst({
+            where: { id, userId },
             select: {
-              commissionBase: true,
-              commissionPercent: true,
-              commissionLotRate: true,
+              rate: true,
+              quantity: true,
+              quantityUnit: true,
+              customer: {
+                select: {
+                  commissionBase: true,
+                  commissionPercent: true,
+                  commissionLotRate: true,
+                },
+              },
             },
+          });
+          if (!currentOrder) {
+            throw new AppError("order not found", 404);
+          }
+          const commissionConfig = customerForCommission || currentOrder.customer;
+          const amountData = computeOrderAmounts(
+            quantity !== undefined ? Number(quantity) : Number(currentOrder.quantity),
+            rate !== undefined ? Number(rate) : Number(currentOrder.rate),
+            quantityUnit !== undefined ? quantityUnit : currentOrder.quantityUnit,
+            commissionConfig
+          );
+          updateData.quantityUnit = amountData.quantityUnit;
+          updateData.lotMeters = amountData.lotMeters;
+          updateData.meter = amountData.meter;
+          updateData.commissionAmount = amountData.commissionAmount;
+        }
+
+        const shouldFinalizeCommission =
+          updateData.status === ORDER_STATUS.COMPLETED ||
+          (processedQuantity !== undefined && existing.status === ORDER_STATUS.COMPLETED);
+        const shouldFinalizeCommissionFromAdd =
+          processedQuantityAdd !== undefined && existing.status === ORDER_STATUS.COMPLETED;
+        if (shouldFinalizeCommission || shouldFinalizeCommissionFromAdd) {
+          const orderSnapshot = await tx.order.findFirst({
+            where: { id, userId },
+            select: {
+              rate: true,
+              quantityUnit: true,
+              lotMeters: true,
+              processedQuantity: true,
+              customer: {
+                select: {
+                  commissionBase: true,
+                  commissionPercent: true,
+                  commissionLotRate: true,
+                },
+              },
+            },
+          });
+          if (!orderSnapshot) {
+            throw new AppError("order not found", 404);
+          }
+          const commissionConfig = customerForCommission || orderSnapshot.customer;
+          const finalProcessedQuantity =
+            processedQuantity !== undefined
+              ? Number(processedQuantity)
+              : processedQuantityAdd !== undefined
+              ? Number(existing.processedQuantity) + Number(processedQuantityAdd)
+              : Number(orderSnapshot.processedQuantity);
+
+          updateData.commissionAmount = computeCommissionAmount({
+            quantityForCommission: finalProcessedQuantity,
+            rate: Number(updateData.rate ?? orderSnapshot.rate),
+            quantityUnit: updateData.quantityUnit ?? orderSnapshot.quantityUnit,
+            lotMeters:
+              updateData.lotMeters !== undefined
+                ? Number(updateData.lotMeters || 0)
+                : Number(orderSnapshot.lotMeters || 0),
+            customerCommissionConfig: commissionConfig,
+          });
+        }
+
+        return tx.order.update({
+          where: { id },
+          data: updateData,
+          include: {
+            user: { select: { id: true, name: true, email: true } },
+            customer: true,
+            manufacturer: true,
+            quality: true,
           },
-        },
+        });
       });
-      if (!orderSnapshot) {
-        throw new AppError("order not found", 404);
+      break;
+    } catch (error) {
+      if (isOrderNoUniqueConflict(error) && attempt < ORDER_NO_RETRY_LIMIT - 1) {
+        continue;
       }
-      const commissionConfig = customerForCommission || orderSnapshot.customer;
-      const finalProcessedQuantity =
-        processedQuantity !== undefined
-          ? Number(processedQuantity)
-          : processedQuantityAdd !== undefined
-          ? Number(existing.processedQuantity) + Number(processedQuantityAdd)
-          : Number(orderSnapshot.processedQuantity);
-
-      updateData.commissionAmount = computeCommissionAmount({
-        quantityForCommission: finalProcessedQuantity,
-        rate: Number(updateData.rate ?? orderSnapshot.rate),
-        quantityUnit: updateData.quantityUnit ?? orderSnapshot.quantityUnit,
-        lotMeters:
-          updateData.lotMeters !== undefined
-            ? Number(updateData.lotMeters || 0)
-            : Number(orderSnapshot.lotMeters || 0),
-        customerCommissionConfig: commissionConfig,
-      });
+      throw error;
     }
-
-    return tx.order.update({
-      where: { id },
-      data: updateData,
-      include: {
-        user: { select: { id: true, name: true, email: true } },
-        customer: true,
-        manufacturer: true,
-        quality: true,
-      },
-    });
-  });
+  }
 
   return res.json(normalizeOrder(order));
 });
