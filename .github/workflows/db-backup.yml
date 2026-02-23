@@ -18,7 +18,12 @@ jobs:
       - name: Install backup dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y postgresql-client rclone
+          sudo apt-get install -y curl ca-certificates gnupg lsb-release rclone
+          DIST_CODENAME="$(lsb_release -cs)"
+          echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt ${DIST_CODENAME}-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /usr/share/keyrings/postgresql.gpg
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
 
       - name: Prepare service account credentials
         run: |
