@@ -11,6 +11,7 @@ const {
 
 function normalizeOrder(order) {
   const processedQuantity = Number(order.processedQuantity || 0);
+  const processedMeter = Number(order.processedMeter || 0);
   const progressCommissionAmount = computeCommissionAmount({
     quantityForCommission: processedQuantity,
     rate: Number(order.rate),
@@ -22,6 +23,7 @@ function normalizeOrder(order) {
   return {
     ...order,
     processedQuantity,
+    processedMeter,
     rate: Number(order.rate),
     lotMeters: order.lotMeters === null ? null : Number(order.lotMeters),
     meter: order.meter === null ? null : Number(order.meter),
@@ -110,10 +112,26 @@ function toMeterFromQuantity({ quantity, quantityUnit, lotMeters }) {
   if (quantityUnit === QUANTITY_UNITS.METER) {
     return quantity;
   }
+  if (!Number.isFinite(lotMeters) || lotMeters <= 0) {
+    throw new AppError("lot meter value is required for TAKKA/LOT conversion", 400);
+  }
   if (quantityUnit === QUANTITY_UNITS.LOT) {
     return quantity * lotMeters;
   }
   return quantity * (lotMeters / TAKKA_PER_LOT);
+}
+
+function toQuantityFromMeter({ meter, quantityUnit, lotMeters }) {
+  if (quantityUnit === QUANTITY_UNITS.METER) {
+    return meter;
+  }
+  if (!Number.isFinite(lotMeters) || lotMeters <= 0) {
+    throw new AppError("lot meter value is required for TAKKA/LOT conversion", 400);
+  }
+  if (quantityUnit === QUANTITY_UNITS.LOT) {
+    return meter / lotMeters;
+  }
+  return meter / (lotMeters / TAKKA_PER_LOT);
 }
 
 function computeCommissionAmount({
@@ -148,13 +166,24 @@ function computeCommissionAmount({
   return round2((baseAmount + gstAmount) * (commissionPercent / 100));
 }
 
-function computeOrderAmounts(quantity, rate, quantityUnit, customerCommissionConfig) {
+function computeOrderAmounts(
+  quantity,
+  rate,
+  quantityUnit,
+  customerCommissionConfig,
+  existingLotMeters
+) {
   const normalizedUnit = Object.values(QUANTITY_UNITS).includes(quantityUnit)
     ? quantityUnit
     : QUANTITY_UNITS.TAKKA;
 
+  const parsedExistingLotMeters = Number(existingLotMeters);
   const lotMeters =
-    normalizedUnit === QUANTITY_UNITS.METER ? null : getRandomLotMeters();
+    normalizedUnit === QUANTITY_UNITS.METER
+      ? null
+      : Number.isFinite(parsedExistingLotMeters) && parsedExistingLotMeters > 0
+      ? parsedExistingLotMeters
+      : getRandomLotMeters();
 
   const meter =
     normalizedUnit === QUANTITY_UNITS.METER
@@ -278,6 +307,7 @@ const createOrder = asyncHandler(async (req, res) => {
             rate,
             quantity: Number(quantity),
             processedQuantity: 0,
+            processedMeter: 0,
             status: ORDER_STATUS.PENDING,
             quantityUnit: amountData.quantityUnit,
             lotMeters: amountData.lotMeters,
@@ -314,6 +344,7 @@ const ORDER_SORT_FIELDS = [
   "rate",
   "quantity",
   "processedQuantity",
+  "processedMeter",
   "commissionAmount",
   "createdAt",
   "updatedAt",
@@ -458,6 +489,7 @@ const updateOrder = asyncHandler(async (req, res) => {
     paymentDueOn,
     processedQuantity,
     processedQuantityAdd,
+    processedQuantityAddUnit,
     status,
     manufacturerFirmName,
   } =
@@ -475,6 +507,7 @@ const updateOrder = asyncHandler(async (req, res) => {
     quantityUnit === undefined &&
     processedQuantity === undefined &&
     processedQuantityAdd === undefined &&
+    processedQuantityAddUnit === undefined &&
     status === undefined &&
     manufacturerFirmName === undefined
   ) {
@@ -501,18 +534,27 @@ const updateOrder = asyncHandler(async (req, res) => {
   }
   if (
     processedQuantity !== undefined &&
-    (!Number.isInteger(Number(processedQuantity)) || Number(processedQuantity) < 0)
+    (!Number.isFinite(Number(processedQuantity)) || Number(processedQuantity) < 0)
   ) {
-    throw new AppError("processedQuantity must be a whole number and cannot be negative", 400);
+    throw new AppError("processedQuantity must be a number and cannot be negative", 400);
   }
   if (
     processedQuantityAdd !== undefined &&
-    (!Number.isInteger(Number(processedQuantityAdd)) || Number(processedQuantityAdd) < 0)
+    (!Number.isFinite(Number(processedQuantityAdd)) || Number(processedQuantityAdd) < 0)
   ) {
-    throw new AppError("processedQuantityAdd must be a whole number and cannot be negative", 400);
+    throw new AppError("processedQuantityAdd must be a number and cannot be negative", 400);
+  }
+  if (processedQuantityAddUnit !== undefined) {
+    const normalizedProcessedUnit = String(processedQuantityAddUnit).toUpperCase();
+    if (!Object.values(QUANTITY_UNITS).includes(normalizedProcessedUnit)) {
+      throw new AppError("processedQuantityAddUnit must be one of: TAKKA, LOT, METER", 400);
+    }
   }
   if (processedQuantity !== undefined && processedQuantityAdd !== undefined) {
     throw new AppError("provide either processedQuantity or processedQuantityAdd, not both", 400);
+  }
+  if (processedQuantityAddUnit !== undefined && processedQuantityAdd === undefined) {
+    throw new AppError("processedQuantityAddUnit requires processedQuantityAdd", 400);
   }
   if (
     status !== undefined &&
@@ -531,7 +573,10 @@ const updateOrder = asyncHandler(async (req, res) => {
             id: true,
             manufacturerId: true,
             quantity: true,
+            quantityUnit: true,
+            lotMeters: true,
             processedQuantity: true,
+            processedMeter: true,
             status: true,
             fyStartYear: true,
           },
@@ -601,15 +646,6 @@ const updateOrder = asyncHandler(async (req, res) => {
         if (paymentDueOn !== undefined) {
           updateData.paymentDueOn = paymentDueOn === null ? null : Number(paymentDueOn);
         }
-        if (processedQuantity !== undefined) {
-          const normalizedProcessedQuantity = Number(processedQuantity);
-          updateData.processedQuantity = normalizedProcessedQuantity;
-        }
-        if (processedQuantityAdd !== undefined) {
-          const normalizedProcessedQuantityAdd = Number(processedQuantityAdd);
-          updateData.processedQuantity =
-            Number(existing.processedQuantity) + normalizedProcessedQuantityAdd;
-        }
         if (status !== undefined) {
           updateData.status = String(status).toUpperCase();
         }
@@ -623,6 +659,7 @@ const updateOrder = asyncHandler(async (req, res) => {
               rate: true,
               quantity: true,
               quantityUnit: true,
+              lotMeters: true,
               customer: {
                 select: {
                   commissionBase: true,
@@ -640,12 +677,78 @@ const updateOrder = asyncHandler(async (req, res) => {
             quantity !== undefined ? Number(quantity) : Number(currentOrder.quantity),
             rate !== undefined ? Number(rate) : Number(currentOrder.rate),
             quantityUnit !== undefined ? quantityUnit : currentOrder.quantityUnit,
-            commissionConfig
+            commissionConfig,
+            currentOrder.lotMeters
           );
           updateData.quantityUnit = amountData.quantityUnit;
           updateData.lotMeters = amountData.lotMeters;
           updateData.meter = amountData.meter;
           updateData.commissionAmount = amountData.commissionAmount;
+        }
+
+        const effectiveQuantityUnit = updateData.quantityUnit || existing.quantityUnit;
+        const effectiveLotMeters = Number(
+          updateData.lotMeters !== undefined ? updateData.lotMeters : existing.lotMeters
+        );
+        const existingProcessedQuantity = Number(existing.processedQuantity || 0);
+        const existingProcessedMeter = Number(existing.processedMeter || 0);
+
+        if (processedQuantity !== undefined) {
+          const nextProcessedQuantity = Number(processedQuantity);
+          const nextProcessedMeter = toMeterFromQuantity({
+            quantity: nextProcessedQuantity,
+            quantityUnit: effectiveQuantityUnit,
+            lotMeters: effectiveLotMeters,
+          });
+          updateData.processedQuantity = round2(nextProcessedQuantity);
+          updateData.processedMeter = round2(nextProcessedMeter);
+        }
+
+        if (processedQuantityAdd !== undefined) {
+          const processedAddValue = Number(processedQuantityAdd);
+          const processedAddUnit = String(processedQuantityAddUnit || effectiveQuantityUnit).toUpperCase();
+
+          if (processedAddUnit !== effectiveQuantityUnit && processedAddUnit !== QUANTITY_UNITS.METER) {
+            throw new AppError(
+              `processedQuantityAddUnit must be ${effectiveQuantityUnit} or METER for this order`,
+              400
+            );
+          }
+
+          let quantityIncrement = processedAddValue;
+          let meterIncrement = processedAddValue;
+
+          if (processedAddUnit === QUANTITY_UNITS.METER) {
+            quantityIncrement = toQuantityFromMeter({
+              meter: processedAddValue,
+              quantityUnit: effectiveQuantityUnit,
+              lotMeters: effectiveLotMeters,
+            });
+          } else {
+            meterIncrement = toMeterFromQuantity({
+              quantity: processedAddValue,
+              quantityUnit: effectiveQuantityUnit,
+              lotMeters: effectiveLotMeters,
+            });
+          }
+
+          updateData.processedQuantity = round2(existingProcessedQuantity + quantityIncrement);
+          updateData.processedMeter = round2(existingProcessedMeter + meterIncrement);
+        }
+
+        if (
+          quantityUnit !== undefined &&
+          processedQuantity === undefined &&
+          processedQuantityAdd === undefined
+        ) {
+          updateData.processedMeter = round2(existingProcessedMeter);
+          updateData.processedQuantity = round2(
+            toQuantityFromMeter({
+              meter: existingProcessedMeter,
+              quantityUnit: effectiveQuantityUnit,
+              lotMeters: effectiveLotMeters,
+            })
+          );
         }
 
         const shouldFinalizeCommission =
@@ -674,12 +777,11 @@ const updateOrder = asyncHandler(async (req, res) => {
             throw new AppError("order not found", 404);
           }
           const commissionConfig = customerForCommission || orderSnapshot.customer;
-          const finalProcessedQuantity =
-            processedQuantity !== undefined
-              ? Number(processedQuantity)
-              : processedQuantityAdd !== undefined
-              ? Number(existing.processedQuantity) + Number(processedQuantityAdd)
-              : Number(orderSnapshot.processedQuantity);
+          const finalProcessedQuantity = Number(
+            updateData.processedQuantity !== undefined
+              ? updateData.processedQuantity
+              : orderSnapshot.processedQuantity
+          );
 
           updateData.commissionAmount = computeCommissionAmount({
             quantityForCommission: finalProcessedQuantity,

@@ -93,7 +93,8 @@ model Order {
   status         OrderStatus  @default(PENDING)
   rate           Decimal      @db.Decimal(12, 2)
   quantity       Int
-  processedQuantity Int       @default(0)
+  processedQuantity Decimal   @default(0) @db.Decimal(12, 2)
+  processedMeter    Decimal   @default(0) @db.Decimal(12, 2)
   quantityUnit   QuantityUnit @default(TAKKA)
   lotMeters      Decimal?     @db.Decimal(12, 2)
   meter          Decimal?     @db.Decimal(12, 2)
