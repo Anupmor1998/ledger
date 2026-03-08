@@ -52,7 +52,6 @@ model Customer {
   orders    Order[]  @relation("OrderCustomer")
 
   @@unique([userId, gstNo])
-  @@unique([userId, phone])
   @@index([userId])
 }
 
@@ -69,7 +68,6 @@ model Manufacturer {
   user      User     @relation(fields: [userId], references: [id], onDelete: Restrict)
   orders    Order[]  @relation("OrderManufacturer")
 
-  @@unique([userId, phone])
   @@index([userId])
 }
 
