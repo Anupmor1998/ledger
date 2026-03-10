@@ -98,6 +98,8 @@ model Order {
   meter          Decimal?     @db.Decimal(12, 2)
   commissionAmount Decimal?   @db.Decimal(12, 2)
   remarks        String?
+  remark2        String?
+  remark2Target  Remark2Target?
   paymentDueOn   Int?
   fyStartYear    Int
   orderNo        Int
@@ -132,6 +134,11 @@ enum OrderStatus {
   PENDING
   COMPLETED
   CANCELLED
+}
+
+enum Remark2Target {
+  CUSTOMER
+  MANUFACTURER
 }
 
 model WhatsAppGroup {

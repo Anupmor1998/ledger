@@ -50,7 +50,7 @@ function resolvePaymentDueDays(order, { addExtraDays = 0 } = {}) {
 
 function buildCustomerStyleMessage(
   order,
-  { addExtraPaymentDueDays = 0, includeManufacturerName = true } = {}
+  { addExtraPaymentDueDays = 0, includeManufacturerName = true, recipient = "CUSTOMER" } = {}
 ) {
   const customerDisplay = order.customer?.firmName || order.customer?.name || "-";
   const manufacturerContact = order.manufacturer?.name || "-";
@@ -61,6 +61,9 @@ function buildCustomerStyleMessage(
     addExtraDays: addExtraPaymentDueDays,
   });
   const remark = String(order?.remarks || "").trim();
+  const remark2 = String(order?.remark2 || "").trim();
+  const remark2Target = String(order?.remark2Target || "").toUpperCase();
+  const shouldIncludeRemark2 = Boolean(remark2) && remark2Target === recipient;
 
   return [
     "*ORDER CONFIRMATION*",
@@ -75,6 +78,7 @@ function buildCustomerStyleMessage(
     `- Rate: Rs. ${formatRate(order.rate)} + GST`,
     `- Payment Dhara: ${paymentDueDays} days`,
     ...(remark ? [`- Remark: ${remark}`] : []),
+    ...(shouldIncludeRemark2 ? [`- Remark 2: ${remark2}`] : []),
     "",
     `*Order No:* ${order.orderNo}`,
     `*Order Date:* ${formatDate(order.orderDate)}`,
@@ -93,10 +97,13 @@ function buildOrderWhatsAppLinks(order) {
 }
 
 function buildOrderWhatsAppMessages(order) {
-  const customerMessage = buildCustomerStyleMessage(order);
+  const customerMessage = buildCustomerStyleMessage(order, {
+    recipient: "CUSTOMER",
+  });
   const manufacturerMessage = buildCustomerStyleMessage(order, {
     addExtraPaymentDueDays: 5,
     includeManufacturerName: false,
+    recipient: "MANUFACTURER",
   });
 
   return {

@@ -44,6 +44,10 @@ const ORDER_STATUS = {
   COMPLETED: "COMPLETED",
   CANCELLED: "CANCELLED",
 };
+const REMARK2_TARGETS = {
+  CUSTOMER: "CUSTOMER",
+  MANUFACTURER: "MANUFACTURER",
+};
 const TAKKA_PER_LOT = 12;
 const LOT_MIN_METERS = 1450;
 const LOT_MAX_METERS = 1550;
@@ -238,6 +242,8 @@ const createOrder = asyncHandler(async (req, res) => {
     qualityName,
     orderDate,
     remarks,
+    remark2,
+    remark2Target,
     paymentDueOn,
   } =
     req.body;
@@ -263,6 +269,23 @@ const createOrder = asyncHandler(async (req, res) => {
     (!Number.isInteger(Number(paymentDueOn)) || Number(paymentDueOn) < 0)
   ) {
     throw new AppError("paymentDueOn must be a whole number of days and cannot be negative", 400);
+  }
+
+  const normalizedRemark2 = String(remark2 || "").trim();
+  const normalizedRemark2Target = remark2Target
+    ? String(remark2Target).trim().toUpperCase()
+    : null;
+  if (
+    normalizedRemark2Target &&
+    !Object.values(REMARK2_TARGETS).includes(normalizedRemark2Target)
+  ) {
+    throw new AppError("remark2Target must be one of: CUSTOMER, MANUFACTURER", 400);
+  }
+  if (normalizedRemark2 && !normalizedRemark2Target) {
+    throw new AppError("remark2Target is required when remark2 is provided", 400);
+  }
+  if (!normalizedRemark2 && normalizedRemark2Target) {
+    throw new AppError("remark2 is required when remark2Target is provided", 400);
   }
 
   const parsedOrderDate = parseOrderDateOrThrow(orderDate);
@@ -314,6 +337,8 @@ const createOrder = asyncHandler(async (req, res) => {
             meter: amountData.meter,
             commissionAmount: amountData.commissionAmount,
             remarks: remarks?.trim() || null,
+            remark2: normalizedRemark2 || null,
+            remark2Target: normalizedRemark2 ? normalizedRemark2Target : null,
             paymentDueOn: paymentDueOn !== undefined ? Number(paymentDueOn) : null,
             orderDate: parsedOrderDate,
           },
@@ -486,6 +511,8 @@ const updateOrder = asyncHandler(async (req, res) => {
     qualityName,
     orderDate,
     remarks,
+    remark2,
+    remark2Target,
     paymentDueOn,
     processedQuantity,
     processedQuantityAdd,
@@ -503,6 +530,8 @@ const updateOrder = asyncHandler(async (req, res) => {
     qualityName === undefined &&
     orderDate === undefined &&
     remarks === undefined &&
+    remark2 === undefined &&
+    remark2Target === undefined &&
     paymentDueOn === undefined &&
     quantityUnit === undefined &&
     processedQuantity === undefined &&
@@ -531,6 +560,17 @@ const updateOrder = asyncHandler(async (req, res) => {
     (!Number.isInteger(Number(paymentDueOn)) || Number(paymentDueOn) < 0)
   ) {
     throw new AppError("paymentDueOn must be a whole number of days and cannot be negative", 400);
+  }
+  if (remark2Target !== undefined) {
+    const normalizedRemark2Target = remark2Target
+      ? String(remark2Target).trim().toUpperCase()
+      : "";
+    if (
+      normalizedRemark2Target &&
+      !Object.values(REMARK2_TARGETS).includes(normalizedRemark2Target)
+    ) {
+      throw new AppError("remark2Target must be one of: CUSTOMER, MANUFACTURER", 400);
+    }
   }
   if (
     processedQuantity !== undefined &&
@@ -577,6 +617,8 @@ const updateOrder = asyncHandler(async (req, res) => {
             lotMeters: true,
             processedQuantity: true,
             processedMeter: true,
+            remark2: true,
+            remark2Target: true,
             status: true,
             fyStartYear: true,
           },
@@ -642,6 +684,34 @@ const updateOrder = asyncHandler(async (req, res) => {
         }
         if (remarks !== undefined) {
           updateData.remarks = remarks?.trim() || null;
+        }
+        const hasRemark2Update = remark2 !== undefined;
+        const hasRemark2TargetUpdate = remark2Target !== undefined;
+        if (hasRemark2Update || hasRemark2TargetUpdate) {
+          const nextRemark2 =
+            hasRemark2Update
+              ? String(remark2 || "").trim()
+              : String(existing.remark2 || "").trim();
+          const nextRemark2Target =
+            hasRemark2TargetUpdate
+              ? String(remark2Target || "").trim().toUpperCase()
+              : String(existing.remark2Target || "").trim().toUpperCase();
+
+          if (
+            nextRemark2Target &&
+            !Object.values(REMARK2_TARGETS).includes(nextRemark2Target)
+          ) {
+            throw new AppError("remark2Target must be one of: CUSTOMER, MANUFACTURER", 400);
+          }
+          if (nextRemark2 && !nextRemark2Target) {
+            throw new AppError("remark2Target is required when remark2 is provided", 400);
+          }
+          if (!nextRemark2 && nextRemark2Target) {
+            throw new AppError("remark2 is required when remark2Target is provided", 400);
+          }
+
+          updateData.remark2 = nextRemark2 || null;
+          updateData.remark2Target = nextRemark2 ? nextRemark2Target : null;
         }
         if (paymentDueOn !== undefined) {
           updateData.paymentDueOn = paymentDueOn === null ? null : Number(paymentDueOn);
