@@ -11,7 +11,8 @@
         "prisma:deploy": "prisma migrate deploy",
         "prisma:reset": "prisma migrate reset",
         "prisma:push": "prisma db push",
-        "prisma:studio": "prisma studio"
+        "prisma:studio": "prisma studio",
+        "db:sync-local": "node scripts/sync-prod-to-local.js"
     },
     "keywords": [],
     "author": "",
