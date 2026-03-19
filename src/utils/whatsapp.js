@@ -29,7 +29,10 @@ function formatDate(value) {
   if (Number.isNaN(date.getTime())) {
     return "-";
   }
-  return date.toISOString().slice(0, 10);
+  const day = String(date.getDate()).padStart(2, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const year = date.getFullYear();
+  return `${day}-${month}-${year}`;
 }
 
 function formatRate(rate) {
@@ -48,6 +51,22 @@ function resolvePaymentDueDays(order, { addExtraDays = 0 } = {}) {
   return String(due + addExtraDays);
 }
 
+function joinRemarkParts(parts) {
+  return parts
+    .map((part) => String(part || "").trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
+function buildMergedRemark(order, recipient) {
+  const commonRemark = String(order?.remarks || "").trim();
+  const recipientRemark = String(
+    recipient === "MANUFACTURER" ? order?.manufacturerRemark || "" : order?.customerRemark || ""
+  ).trim();
+
+  return joinRemarkParts([commonRemark, recipientRemark]);
+}
+
 function buildCustomerStyleMessage(
   order,
   { addExtraPaymentDueDays = 0, includeManufacturerName = true, recipient = "CUSTOMER" } = {}
@@ -60,28 +79,27 @@ function buildCustomerStyleMessage(
   const paymentDueDays = resolvePaymentDueDays(order, {
     addExtraDays: addExtraPaymentDueDays,
   });
-  const remark = String(order?.remarks || "").trim();
-  const remark2 = String(order?.remark2 || "").trim();
-  const remark2Target = String(order?.remark2Target || "").toUpperCase();
-  const shouldIncludeRemark2 = Boolean(remark2) && remark2Target === recipient;
+  const mergedRemark = buildMergedRemark(order, recipient);
+  const showDyeingGuarantees = recipient === "MANUFACTURER" && Boolean(order?.dyeingGuarantees);
+  const qualityLine = showDyeingGuarantees
+    ? `- Quality: ${order.quality.name}, Dyeing guarantees`
+    : `- Quality: ${order.quality.name}`;
 
   return [
-    "*ORDER CONFIRMATION*",
+    `*Order No:* ${order.orderNo}`,
+    `*Order Date:* ${formatDate(order.orderDate)}`,
     "",
     `*Party:* ${customerDisplay}`,
     `*GST:* ${order.customer.gstNo || "-"}`,
     `*Address:* ${order.customer.address}`,
     "",
     "*Order Details*",
-    `- Quality: ${order.quality.name}`,
+    qualityLine,
     `- Qty: ${quantityLabel}`,
     `- Rate: ${formatRate(order.rate)} + GST`,
     `- Payment Dhara: ${paymentDueDays} days`,
-    ...(remark ? [`- Remark: ${remark}`] : []),
-    ...(shouldIncludeRemark2 ? [`- ${remark2}`] : []),
+    ...(mergedRemark ? [`- Remark: ${mergedRemark}`] : []),
     "",
-    `*Order No:* ${order.orderNo}`,
-    `*Order Date:* ${formatDate(order.orderDate)}`,
     ...(includeManufacturerName ? [manufacturerContact] : []),
     order.user.name || order.user.email,
   ].join("\n");

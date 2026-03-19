@@ -44,10 +44,6 @@ const ORDER_STATUS = {
   COMPLETED: "COMPLETED",
   CANCELLED: "CANCELLED",
 };
-const REMARK2_TARGETS = {
-  CUSTOMER: "CUSTOMER",
-  MANUFACTURER: "MANUFACTURER",
-};
 const TAKKA_PER_LOT = 12;
 const LOT_MIN_METERS = 1450;
 const LOT_MAX_METERS = 1550;
@@ -68,6 +64,18 @@ function parseOrderDateOrThrow(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     throw new AppError("orderDate is invalid", 400);
+  }
+  return date;
+}
+
+function parseOptionalDateOrThrow(value, fieldName) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new AppError(`${fieldName} is invalid`, 400);
   }
   return date;
 }
@@ -242,9 +250,12 @@ const createOrder = asyncHandler(async (req, res) => {
     qualityName,
     orderDate,
     remarks,
-    remark2,
-    remark2Target,
+    customerRemark,
+    manufacturerRemark,
+    dyeingGuarantees,
     paymentDueOn,
+    deliveryDateFrom,
+    deliveryDateTo,
   } =
     req.body;
   const userId = req.user.userId;
@@ -271,24 +282,12 @@ const createOrder = asyncHandler(async (req, res) => {
     throw new AppError("paymentDueOn must be a whole number of days and cannot be negative", 400);
   }
 
-  const normalizedRemark2 = String(remark2 || "").trim();
-  const normalizedRemark2Target = remark2Target
-    ? String(remark2Target).trim().toUpperCase()
-    : null;
-  if (
-    normalizedRemark2Target &&
-    !Object.values(REMARK2_TARGETS).includes(normalizedRemark2Target)
-  ) {
-    throw new AppError("remark2Target must be one of: CUSTOMER, MANUFACTURER", 400);
-  }
-  if (normalizedRemark2 && !normalizedRemark2Target) {
-    throw new AppError("remark2Target is required when remark2 is provided", 400);
-  }
-  if (!normalizedRemark2 && normalizedRemark2Target) {
-    throw new AppError("remark2 is required when remark2Target is provided", 400);
-  }
-
   const parsedOrderDate = parseOrderDateOrThrow(orderDate);
+  const parsedDeliveryDateFrom = parseOptionalDateOrThrow(deliveryDateFrom, "deliveryDateFrom");
+  const parsedDeliveryDateTo = parseOptionalDateOrThrow(deliveryDateTo, "deliveryDateTo");
+  if (parsedDeliveryDateFrom && parsedDeliveryDateTo && parsedDeliveryDateFrom > parsedDeliveryDateTo) {
+    throw new AppError("deliveryDateFrom cannot be after deliveryDateTo", 400);
+  }
   const fyStartYear = getFinancialYearStartYear(parsedOrderDate);
   let order;
 
@@ -337,9 +336,12 @@ const createOrder = asyncHandler(async (req, res) => {
             meter: amountData.meter,
             commissionAmount: amountData.commissionAmount,
             remarks: remarks?.trim() || null,
-            remark2: normalizedRemark2 || null,
-            remark2Target: normalizedRemark2 ? normalizedRemark2Target : null,
+            customerRemark: customerRemark?.trim() || null,
+            manufacturerRemark: manufacturerRemark?.trim() || null,
+            dyeingGuarantees: Boolean(dyeingGuarantees),
             paymentDueOn: paymentDueOn !== undefined ? Number(paymentDueOn) : null,
+            deliveryDateFrom: parsedDeliveryDateFrom,
+            deliveryDateTo: parsedDeliveryDateTo,
             orderDate: parsedOrderDate,
           },
           include: {
@@ -511,9 +513,12 @@ const updateOrder = asyncHandler(async (req, res) => {
     qualityName,
     orderDate,
     remarks,
-    remark2,
-    remark2Target,
+    customerRemark,
+    manufacturerRemark,
+    dyeingGuarantees,
     paymentDueOn,
+    deliveryDateFrom,
+    deliveryDateTo,
     processedQuantity,
     processedQuantityAdd,
     processedQuantityAddUnit,
@@ -530,9 +535,12 @@ const updateOrder = asyncHandler(async (req, res) => {
     qualityName === undefined &&
     orderDate === undefined &&
     remarks === undefined &&
-    remark2 === undefined &&
-    remark2Target === undefined &&
+    customerRemark === undefined &&
+    manufacturerRemark === undefined &&
+    dyeingGuarantees === undefined &&
     paymentDueOn === undefined &&
+    deliveryDateFrom === undefined &&
+    deliveryDateTo === undefined &&
     quantityUnit === undefined &&
     processedQuantity === undefined &&
     processedQuantityAdd === undefined &&
@@ -560,17 +568,6 @@ const updateOrder = asyncHandler(async (req, res) => {
     (!Number.isInteger(Number(paymentDueOn)) || Number(paymentDueOn) < 0)
   ) {
     throw new AppError("paymentDueOn must be a whole number of days and cannot be negative", 400);
-  }
-  if (remark2Target !== undefined) {
-    const normalizedRemark2Target = remark2Target
-      ? String(remark2Target).trim().toUpperCase()
-      : "";
-    if (
-      normalizedRemark2Target &&
-      !Object.values(REMARK2_TARGETS).includes(normalizedRemark2Target)
-    ) {
-      throw new AppError("remark2Target must be one of: CUSTOMER, MANUFACTURER", 400);
-    }
   }
   if (
     processedQuantity !== undefined &&
@@ -602,6 +599,22 @@ const updateOrder = asyncHandler(async (req, res) => {
   ) {
     throw new AppError("status must be one of: PENDING, COMPLETED, CANCELLED", 400);
   }
+  if (
+    deliveryDateFrom !== undefined &&
+    deliveryDateFrom !== null &&
+    deliveryDateFrom !== "" &&
+    Number.isNaN(new Date(deliveryDateFrom).getTime())
+  ) {
+    throw new AppError("deliveryDateFrom is invalid", 400);
+  }
+  if (
+    deliveryDateTo !== undefined &&
+    deliveryDateTo !== null &&
+    deliveryDateTo !== "" &&
+    Number.isNaN(new Date(deliveryDateTo).getTime())
+  ) {
+    throw new AppError("deliveryDateTo is invalid", 400);
+  }
 
   let order;
   for (let attempt = 0; attempt < ORDER_NO_RETRY_LIMIT; attempt += 1) {
@@ -617,8 +630,8 @@ const updateOrder = asyncHandler(async (req, res) => {
             lotMeters: true,
             processedQuantity: true,
             processedMeter: true,
-            remark2: true,
-            remark2Target: true,
+            deliveryDateFrom: true,
+            deliveryDateTo: true,
             status: true,
             fyStartYear: true,
           },
@@ -685,36 +698,34 @@ const updateOrder = asyncHandler(async (req, res) => {
         if (remarks !== undefined) {
           updateData.remarks = remarks?.trim() || null;
         }
-        const hasRemark2Update = remark2 !== undefined;
-        const hasRemark2TargetUpdate = remark2Target !== undefined;
-        if (hasRemark2Update || hasRemark2TargetUpdate) {
-          const nextRemark2 =
-            hasRemark2Update
-              ? String(remark2 || "").trim()
-              : String(existing.remark2 || "").trim();
-          const nextRemark2Target =
-            hasRemark2TargetUpdate
-              ? String(remark2Target || "").trim().toUpperCase()
-              : String(existing.remark2Target || "").trim().toUpperCase();
-
-          if (
-            nextRemark2Target &&
-            !Object.values(REMARK2_TARGETS).includes(nextRemark2Target)
-          ) {
-            throw new AppError("remark2Target must be one of: CUSTOMER, MANUFACTURER", 400);
-          }
-          if (nextRemark2 && !nextRemark2Target) {
-            throw new AppError("remark2Target is required when remark2 is provided", 400);
-          }
-          if (!nextRemark2 && nextRemark2Target) {
-            throw new AppError("remark2 is required when remark2Target is provided", 400);
-          }
-
-          updateData.remark2 = nextRemark2 || null;
-          updateData.remark2Target = nextRemark2 ? nextRemark2Target : null;
+        if (customerRemark !== undefined) {
+          updateData.customerRemark = customerRemark?.trim() || null;
+        }
+        if (manufacturerRemark !== undefined) {
+          updateData.manufacturerRemark = manufacturerRemark?.trim() || null;
+        }
+        if (dyeingGuarantees !== undefined) {
+          updateData.dyeingGuarantees = Boolean(dyeingGuarantees);
         }
         if (paymentDueOn !== undefined) {
           updateData.paymentDueOn = paymentDueOn === null ? null : Number(paymentDueOn);
+        }
+        const nextDeliveryDateFrom =
+          deliveryDateFrom !== undefined
+            ? parseOptionalDateOrThrow(deliveryDateFrom, "deliveryDateFrom")
+            : existing.deliveryDateFrom;
+        const nextDeliveryDateTo =
+          deliveryDateTo !== undefined
+            ? parseOptionalDateOrThrow(deliveryDateTo, "deliveryDateTo")
+            : existing.deliveryDateTo;
+        if (nextDeliveryDateFrom && nextDeliveryDateTo && nextDeliveryDateFrom > nextDeliveryDateTo) {
+          throw new AppError("deliveryDateFrom cannot be after deliveryDateTo", 400);
+        }
+        if (deliveryDateFrom !== undefined) {
+          updateData.deliveryDateFrom = nextDeliveryDateFrom;
+        }
+        if (deliveryDateTo !== undefined) {
+          updateData.deliveryDateTo = nextDeliveryDateTo;
         }
         if (status !== undefined) {
           updateData.status = String(status).toUpperCase();
