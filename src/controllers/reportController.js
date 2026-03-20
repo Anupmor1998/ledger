@@ -1,6 +1,8 @@
 const prisma = require("../config/prisma");
 const asyncHandler = require("../utils/asyncHandler");
 const { sendWorkbook } = require("../utils/reportExcel");
+const { getFinancialYearStartYear } = require("../utils/financialYear");
+const AppError = require("../utils/appError");
 
 const ORDER_STATUS = {
   PENDING: "PENDING",
@@ -33,8 +35,22 @@ function buildDateFilter(query) {
   return filter;
 }
 
-function getOrderFilters(query, userId) {
-  const where = { userId };
+async function getSelectedFinancialYearStartForUser(userId) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { selectedFinancialYearStart: true },
+  });
+
+  if (!user) {
+    throw new AppError("user not found", 404);
+  }
+
+  return user.selectedFinancialYearStart ?? getFinancialYearStartYear();
+}
+
+async function getOrderFilters(query, userId) {
+  const selectedFinancialYearStart = await getSelectedFinancialYearStartForUser(userId);
+  const where = { userId, fyStartYear: selectedFinancialYearStart };
   const orderDate = buildDateFilter(query);
   if (orderDate) where.orderDate = orderDate;
   if (query.customerId) where.customerId = query.customerId;
@@ -102,30 +118,30 @@ function withStatus(where, status) {
 }
 
 const exportOrderRegisterReport = asyncHandler(async (req, res) => {
-  const orders = await fetchOrders(getOrderFilters(req.query, req.user.userId));
+  const orders = await fetchOrders(await getOrderFilters(req.query, req.user.userId));
   await sendStandardReport(res, "order-register.xlsx", orders);
 });
 
 const exportOrderProgressReport = asyncHandler(async (req, res) => {
-  const where = withStatus(getOrderFilters(req.query, req.user.userId), ORDER_STATUS.PENDING);
+  const where = withStatus(await getOrderFilters(req.query, req.user.userId), ORDER_STATUS.PENDING);
   const orders = await fetchOrders(where);
   await sendStandardReport(res, "order-progress.xlsx", orders);
 });
 
 const exportCompletedSettlementReport = asyncHandler(async (req, res) => {
-  const where = withStatus(getOrderFilters(req.query, req.user.userId), ORDER_STATUS.COMPLETED);
+  const where = withStatus(await getOrderFilters(req.query, req.user.userId), ORDER_STATUS.COMPLETED);
   const orders = await fetchOrders(where);
   await sendStandardReport(res, "completed-settlement.xlsx", orders);
 });
 
 const exportCancelledOrdersReport = asyncHandler(async (req, res) => {
-  const where = withStatus(getOrderFilters(req.query, req.user.userId), ORDER_STATUS.CANCELLED);
+  const where = withStatus(await getOrderFilters(req.query, req.user.userId), ORDER_STATUS.CANCELLED);
   const orders = await fetchOrders(where);
   await sendStandardReport(res, "cancelled-orders.xlsx", orders);
 });
 
 const exportManufacturerCommissionReport = asyncHandler(async (req, res) => {
-  const where = withStatus(getOrderFilters(req.query, req.user.userId), ORDER_STATUS.COMPLETED);
+  const where = withStatus(await getOrderFilters(req.query, req.user.userId), ORDER_STATUS.COMPLETED);
   const orders = await fetchOrders(where);
   const sortedByManufacturer = [...orders].sort((a, b) =>
     (a.manufacturer?.firmName || a.manufacturer?.name || "").localeCompare(

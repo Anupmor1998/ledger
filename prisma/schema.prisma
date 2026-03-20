@@ -12,6 +12,7 @@ model User {
   name                String?
   password            String
   theme               String               @default("light")
+  selectedFinancialYearStart Int?
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
   customers           Customer[]

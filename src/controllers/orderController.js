@@ -2,6 +2,7 @@ const prisma = require("../config/prisma");
 const AppError = require("../utils/appError");
 const asyncHandler = require("../utils/asyncHandler");
 const { buildOrderWhatsAppLinks, buildOrderWhatsAppMessages } = require("../utils/whatsapp");
+const { getFinancialYearStartYear } = require("../utils/financialYear");
 const {
   buildPaginatedResponse,
   normalizeSearch,
@@ -49,7 +50,6 @@ const LOT_MIN_METERS = 1450;
 const LOT_MAX_METERS = 1550;
 const GST_RATE = 0.05;
 const DEFAULT_COMMISSION_PERCENT = 1;
-const INDIA_TIME_ZONE = "Asia/Kolkata";
 const ORDER_NO_RETRY_LIMIT = 3;
 
 function getRandomLotMeters() {
@@ -80,24 +80,6 @@ function parseOptionalDateOrThrow(value, fieldName) {
   return date;
 }
 
-function getFinancialYearStartYear(dateValue) {
-  const date = parseOrderDateOrThrow(dateValue);
-  const formatter = new Intl.DateTimeFormat("en-IN", {
-    timeZone: INDIA_TIME_ZONE,
-    year: "numeric",
-    month: "2-digit",
-  });
-  const parts = formatter.formatToParts(date);
-  const year = Number(parts.find((part) => part.type === "year")?.value);
-  const month = Number(parts.find((part) => part.type === "month")?.value);
-
-  if (!Number.isFinite(year) || !Number.isFinite(month)) {
-    throw new AppError("unable to derive financial year from orderDate", 400);
-  }
-
-  return month >= 4 ? year : year - 1;
-}
-
 async function getNextOrderNo(tx, userId, fyStartYear) {
   const lastOrder = await tx.order.findFirst({
     where: { userId, fyStartYear },
@@ -105,6 +87,19 @@ async function getNextOrderNo(tx, userId, fyStartYear) {
     select: { orderNo: true },
   });
   return (lastOrder?.orderNo || 0) + 1;
+}
+
+async function getSelectedFinancialYearStartForUser(userId) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { selectedFinancialYearStart: true },
+  });
+
+  if (!user) {
+    throw new AppError("user not found", 404);
+  }
+
+  return user.selectedFinancialYearStart ?? getFinancialYearStartYear();
 }
 
 function isOrderNoUniqueConflict(error) {
@@ -395,6 +390,7 @@ function buildOrderSort(sortBy, sortOrder) {
 
 const listOrders = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
+  const selectedFinancialYearStart = await getSelectedFinancialYearStartForUser(userId);
   const pagination = parsePagination(req.query);
   const { sortBy, sortOrder } = parseSort(req.query, ORDER_SORT_FIELDS, "createdAt", "desc");
   const search = normalizeSearch(req.query.search);
@@ -434,6 +430,7 @@ const listOrders = asyncHandler(async (req, res) => {
 
   const where = {
     userId,
+    fyStartYear: selectedFinancialYearStart,
     ...(customerId ? { customerId } : {}),
     ...(manufacturerId ? { manufacturerId } : {}),
     ...(qualityId ? { qualityId } : {}),

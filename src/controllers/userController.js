@@ -2,6 +2,7 @@ const bcrypt = require("bcryptjs");
 const prisma = require("../config/prisma");
 const AppError = require("../utils/appError");
 const asyncHandler = require("../utils/asyncHandler");
+const { getFinancialYearStartYear, getFinancialYearLabel } = require("../utils/financialYear");
 
 const ALLOWED_THEMES = ["light", "dark"];
 const SALT_ROUNDS = 10;
@@ -12,45 +13,92 @@ const listUsers = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { id: true, email: true, name: true, theme: true, createdAt: true, updatedAt: true },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      theme: true,
+      selectedFinancialYearStart: true,
+      createdAt: true,
+      updatedAt: true,
+    },
   });
 
   if (!user) {
     throw new AppError("user not found", 404);
   }
 
-  return res.json([user]);
+  return res.json([
+    {
+      ...user,
+      selectedFinancialYearStart:
+        user.selectedFinancialYearStart ?? getFinancialYearStartYear(),
+    },
+  ]);
 });
 
 const getMyPreferences = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { theme: true },
+    select: { theme: true, selectedFinancialYearStart: true },
   });
 
   if (!user) {
     throw new AppError("user not found", 404);
   }
 
-  return res.json({ theme: user.theme });
+  const selectedFinancialYearStart =
+    user.selectedFinancialYearStart ?? getFinancialYearStartYear();
+
+  return res.json({
+    theme: user.theme,
+    selectedFinancialYearStart,
+    selectedFinancialYearLabel: getFinancialYearLabel(selectedFinancialYearStart),
+  });
 });
 
 const updateMyPreferences = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
-  const { theme } = req.body;
+  const { theme, selectedFinancialYearStart } = req.body;
+  const hasTheme = theme !== undefined;
+  const hasFinancialYear = selectedFinancialYearStart !== undefined;
 
-  if (!theme || !ALLOWED_THEMES.includes(theme)) {
-    throw new AppError("theme must be one of: light, dark", 400);
+  if (!hasTheme && !hasFinancialYear) {
+    throw new AppError("at least one preference field is required", 400);
+  }
+
+  const data = {};
+
+  if (hasTheme) {
+    if (!theme || !ALLOWED_THEMES.includes(theme)) {
+      throw new AppError("theme must be one of: light, dark", 400);
+    }
+    data.theme = theme;
+  }
+
+  if (hasFinancialYear) {
+    const nextFinancialYear = Number(selectedFinancialYearStart);
+    if (!Number.isInteger(nextFinancialYear) || nextFinancialYear < 2000 || nextFinancialYear > 2100) {
+      throw new AppError("selectedFinancialYearStart must be a valid financial year", 400);
+    }
+    data.selectedFinancialYearStart = nextFinancialYear;
   }
 
   const updated = await prisma.user.update({
     where: { id: userId },
-    data: { theme },
-    select: { theme: true },
+    data,
+    select: { theme: true, selectedFinancialYearStart: true },
   });
 
-  return res.json(updated);
+  const effectiveFinancialYear =
+    updated.selectedFinancialYearStart ?? getFinancialYearStartYear();
+
+  return res.json({
+    theme: updated.theme,
+    selectedFinancialYearStart: effectiveFinancialYear,
+    selectedFinancialYearLabel: getFinancialYearLabel(effectiveFinancialYear),
+  });
 });
 
 const updateMyProfile = asyncHandler(async (req, res) => {
@@ -109,12 +157,17 @@ const updateMyProfile = asyncHandler(async (req, res) => {
       email: true,
       name: true,
       theme: true,
+      selectedFinancialYearStart: true,
       createdAt: true,
       updatedAt: true,
     },
   });
 
-  return res.json(updated);
+  return res.json({
+    ...updated,
+    selectedFinancialYearStart:
+      updated.selectedFinancialYearStart ?? getFinancialYearStartYear(),
+  });
 });
 
 const listMyWhatsAppGroups = asyncHandler(async (req, res) => {

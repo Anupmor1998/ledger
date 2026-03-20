@@ -6,6 +6,7 @@ const { createToken } = require("../utils/jwt");
 const { sendPasswordResetEmail, USING_PLACEHOLDER_KEY } = require("../utils/email");
 const AppError = require("../utils/appError");
 const asyncHandler = require("../utils/asyncHandler");
+const { getFinancialYearStartYear } = require("../utils/financialYear");
 
 const SALT_ROUNDS = 10;
 
@@ -31,8 +32,20 @@ const signup = asyncHandler(async (req, res) => {
 
   const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
   const user = await prisma.user.create({
-    data: { email, name, password: passwordHash },
-    select: { id: true, email: true, name: true, theme: true, createdAt: true },
+    data: {
+      email,
+      name,
+      password: passwordHash,
+      selectedFinancialYearStart: getFinancialYearStartYear(),
+    },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      theme: true,
+      selectedFinancialYearStart: true,
+      createdAt: true,
+    },
   });
 
   const token = createToken(user);
@@ -65,6 +78,8 @@ const login = asyncHandler(async (req, res) => {
       email: user.email,
       name: user.name,
       theme: user.theme,
+      selectedFinancialYearStart:
+        user.selectedFinancialYearStart ?? getFinancialYearStartYear(),
       createdAt: user.createdAt,
     },
     token,
