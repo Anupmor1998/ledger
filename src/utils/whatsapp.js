@@ -51,6 +51,16 @@ function resolvePaymentDueDays(order, { addExtraDays = 0 } = {}) {
   return String(due + addExtraDays);
 }
 
+function buildDeliveryRange(order) {
+  const from = order?.deliveryDateFrom ? formatDate(order.deliveryDateFrom) : "";
+  const to = order?.deliveryDateTo ? formatDate(order.deliveryDateTo) : "";
+
+  if (from && to) {
+    return `${from} to ${to}`;
+  }
+  return from || to || "";
+}
+
 function joinRemarkParts(parts) {
   return parts
     .map((part) => String(part || "").trim())
@@ -79,10 +89,11 @@ function buildCustomerStyleMessage(
   const paymentDueDays = resolvePaymentDueDays(order, {
     addExtraDays: addExtraPaymentDueDays,
   });
+  const deliveryRange = buildDeliveryRange(order);
   const mergedRemark = buildMergedRemark(order, recipient);
   const showDyeingGuarantees = recipient === "MANUFACTURER" && Boolean(order?.dyeingGuarantees);
   const qualityLine = showDyeingGuarantees
-    ? `- Quality: ${order.quality.name}, Dyeing guarantees`
+    ? `- Quality: ${order.quality.name}, डाइंग गारंटी`
     : `- Quality: ${order.quality.name}`;
 
   return [
@@ -97,6 +108,7 @@ function buildCustomerStyleMessage(
     qualityLine,
     `- Qty: ${quantityLabel}`,
     `- Rate: ${formatRate(order.rate)} + GST`,
+    ...(deliveryRange ? [`- Delivery: ${deliveryRange}`] : []),
     `- Payment Dhara: ${paymentDueDays} days`,
     ...(mergedRemark ? [`- Remark: ${mergedRemark}`] : []),
     "",
