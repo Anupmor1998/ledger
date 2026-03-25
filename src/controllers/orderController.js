@@ -4,6 +4,11 @@ const asyncHandler = require("../utils/asyncHandler");
 const { buildOrderWhatsAppLinks, buildOrderWhatsAppMessages } = require("../utils/whatsapp");
 const { getFinancialYearStartYear } = require("../utils/financialYear");
 const {
+  getNextPendingPaymentSerialNo,
+  getPendingPaymentStatus,
+  isPendingPaymentSerialConflict,
+} = require("../utils/payments");
+const {
   buildPaginatedResponse,
   normalizeSearch,
   parsePagination,
@@ -51,6 +56,7 @@ const LOT_MAX_METERS = 1550;
 const GST_RATE = 0.05;
 const DEFAULT_COMMISSION_PERCENT = 1;
 const ORDER_NO_RETRY_LIMIT = 3;
+const PENDING_PAYMENT_RETRY_LIMIT = 3;
 
 function getRandomLotMeters() {
   return LOT_MIN_METERS + Math.random() * (LOT_MAX_METERS - LOT_MIN_METERS);
@@ -77,6 +83,15 @@ function parseOptionalDateOrThrow(value, fieldName) {
   if (Number.isNaN(date.getTime())) {
     throw new AppError(`${fieldName} is invalid`, 400);
   }
+  return date;
+}
+
+function addDays(dateValue, days) {
+  if (!Number.isFinite(days)) {
+    return null;
+  }
+  const date = new Date(dateValue);
+  date.setDate(date.getDate() + days);
   return date;
 }
 
@@ -210,6 +225,106 @@ function computeOrderAmounts(
     meter: round2(meter),
     commissionAmount: round2(commissionAmount),
   };
+}
+
+function getPendingPaymentAccountName(order) {
+  return String(order?.customer?.firmName || order?.customer?.name || "").trim();
+}
+
+async function syncPendingPaymentForCompletedOrder(tx, order) {
+  const amountDue = round2(order?.commissionAmount || 0);
+  if (amountDue <= 0) {
+    return null;
+  }
+
+  const accountName = getPendingPaymentAccountName(order);
+  const paymentDueOn = Number(order?.paymentDueOn);
+  const dueDate =
+    Number.isInteger(paymentDueOn) && paymentDueOn >= 0 ? addDays(order.orderDate, paymentDueOn) : null;
+
+  const existing = await tx.pendingPayment.findUnique({
+    where: { orderId: order.id },
+    select: {
+      id: true,
+      amountReceived: true,
+    },
+  });
+
+  if (existing) {
+    const amountReceived = round2(existing.amountReceived || 0);
+    const balanceAmount = round2(Math.max(amountDue - amountReceived, 0));
+    const status = getPendingPaymentStatus(amountDue, amountReceived);
+
+    return tx.pendingPayment.update({
+      where: { id: existing.id },
+      data: {
+        accountName,
+        amountDue,
+        balanceAmount,
+        status,
+        dueDate,
+        settledAt: status === "PAID" ? new Date() : null,
+      },
+    });
+  }
+
+  for (let attempt = 0; attempt < PENDING_PAYMENT_RETRY_LIMIT; attempt += 1) {
+    try {
+      const serialNo = await getNextPendingPaymentSerialNo(tx, order.userId, order.fyStartYear);
+      return await tx.pendingPayment.create({
+        data: {
+          userId: order.userId,
+          orderId: order.id,
+          fyStartYear: order.fyStartYear,
+          serialNo,
+          accountName,
+          amountDue,
+          amountReceived: 0,
+          balanceAmount: amountDue,
+          status: "PENDING",
+          dueDate,
+        },
+      });
+    } catch (error) {
+      if (isPendingPaymentSerialConflict(error) && attempt < PENDING_PAYMENT_RETRY_LIMIT - 1) {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  return null;
+}
+
+async function syncPendingPaymentForOrder(tx, order) {
+  if (order.status === ORDER_STATUS.COMPLETED) {
+    return syncPendingPaymentForCompletedOrder(tx, order);
+  }
+
+  const existing = await tx.pendingPayment.findUnique({
+    where: { orderId: order.id },
+    select: {
+      id: true,
+      paymentReceipts: { select: { id: true }, take: 1 },
+    },
+  });
+
+  if (!existing) {
+    return null;
+  }
+
+  if (existing.paymentReceipts.length > 0) {
+    throw new AppError(
+      "cannot change completed order status after receiving payment against it",
+      400
+    );
+  }
+
+  await tx.pendingPayment.delete({
+    where: { id: existing.id },
+  });
+
+  return null;
 }
 
 async function resolveQualityId(tx, userId, qualityName) {
@@ -873,7 +988,7 @@ const updateOrder = asyncHandler(async (req, res) => {
           });
         }
 
-        return tx.order.update({
+        const updatedOrder = await tx.order.update({
           where: { id },
           data: updateData,
           include: {
@@ -883,6 +998,9 @@ const updateOrder = asyncHandler(async (req, res) => {
             quality: true,
           },
         });
+
+        await syncPendingPaymentForOrder(tx, updatedOrder);
+        return updatedOrder;
       });
       break;
     } catch (error) {

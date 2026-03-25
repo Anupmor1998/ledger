@@ -5,6 +5,7 @@ const customerRoutes = require("./routes/customerRoutes");
 const healthRoutes = require("./routes/healthRoutes");
 const manufacturerRoutes = require("./routes/manufacturerRoutes");
 const orderRoutes = require("./routes/orderRoutes");
+const pendingPaymentRoutes = require("./routes/pendingPaymentRoutes");
 const paymentReceiptRoutes = require("./routes/paymentReceiptRoutes");
 const qualityRoutes = require("./routes/qualityRoutes");
 const reportRoutes = require("./routes/reportRoutes");
@@ -37,6 +38,7 @@ app.use(`${apiPrefix}/customers`, customerRoutes);
 app.use(`${apiPrefix}/manufacturers`, manufacturerRoutes);
 app.use(`${apiPrefix}/qualities`, qualityRoutes);
 app.use(`${apiPrefix}/orders`, orderRoutes);
+app.use(`${apiPrefix}/pending-payments`, pendingPaymentRoutes);
 app.use(`${apiPrefix}/payment-receipts`, paymentReceiptRoutes);
 app.use(`${apiPrefix}/reports`, reportRoutes);
 
