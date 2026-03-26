@@ -37,6 +37,26 @@ const listPaymentReceipts = asyncHandler(async (req, res) => {
   const pagination = parsePagination(req.query);
   const { sortBy, sortOrder } = parseSort(req.query, RECEIPT_SORT_FIELDS, "date", "desc");
   const search = normalizeSearch(req.query.search);
+  const paymentModeFilter = req.query.paymentMode ? String(req.query.paymentMode).toUpperCase() : null;
+  if (paymentModeFilter && !Object.values(PAYMENT_MODES).includes(paymentModeFilter)) {
+    throw new AppError("paymentMode must be one of: CASH, CHEQUE, ONLINE, UPI", 400);
+  }
+  const dateFrom = req.query.dateFrom ? new Date(String(req.query.dateFrom)) : null;
+  const dateTo = req.query.dateTo ? new Date(String(req.query.dateTo)) : null;
+  const receivedFrom = req.query.receivedFrom ? new Date(String(req.query.receivedFrom)) : null;
+  const receivedTo = req.query.receivedTo ? new Date(String(req.query.receivedTo)) : null;
+  if (dateFrom && Number.isNaN(dateFrom.getTime())) {
+    throw new AppError("invalid dateFrom date", 400);
+  }
+  if (dateTo && Number.isNaN(dateTo.getTime())) {
+    throw new AppError("invalid dateTo date", 400);
+  }
+  if (receivedFrom && Number.isNaN(receivedFrom.getTime())) {
+    throw new AppError("invalid receivedFrom date", 400);
+  }
+  if (receivedTo && Number.isNaN(receivedTo.getTime())) {
+    throw new AppError("invalid receivedTo date", 400);
+  }
   const normalizedPaymentModeSearch = search ? String(search).toUpperCase() : null;
   const hasPaymentModeSearch =
     normalizedPaymentModeSearch &&
@@ -45,6 +65,23 @@ const listPaymentReceipts = asyncHandler(async (req, res) => {
   const where = {
     userId,
     fyStartYear: selectedFinancialYearStart,
+    ...(paymentModeFilter ? { paymentMode: paymentModeFilter } : {}),
+    ...(dateFrom || dateTo
+      ? {
+          date: {
+            ...(dateFrom ? { gte: dateFrom } : {}),
+            ...(dateTo ? { lte: dateTo } : {}),
+          },
+        }
+      : {}),
+    ...(receivedFrom || receivedTo
+      ? {
+          paymentReceivedDate: {
+            ...(receivedFrom ? { gte: receivedFrom } : {}),
+            ...(receivedTo ? { lte: receivedTo } : {}),
+          },
+        }
+      : {}),
     ...(search
       ? {
           OR: [

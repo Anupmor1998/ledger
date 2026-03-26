@@ -10,6 +10,7 @@ const {
 const { getFinancialYearStartYear } = require("../utils/financialYear");
 const {
   PAYMENT_MODES,
+  PENDING_PAYMENT_STATUS,
   getSelectedFinancialYearStartForUser,
   getNextPaymentReceiptSerialNo,
   isPaymentReceiptSerialConflict,
@@ -59,10 +60,38 @@ const listPendingPayments = asyncHandler(async (req, res) => {
   const search = normalizeSearch(req.query.search);
   const searchAsNumber = Number.parseInt(search || "", 10);
   const hasNumericSearch = Number.isFinite(searchAsNumber);
+  const statusFilter = req.query.status ? String(req.query.status).toUpperCase() : null;
+  if (
+    statusFilter &&
+    ![PENDING_PAYMENT_STATUS.PENDING, PENDING_PAYMENT_STATUS.PARTIAL].includes(statusFilter)
+  ) {
+    throw new AppError("status must be one of: PENDING, PARTIAL", 400);
+  }
+  const dueFrom = req.query.dueFrom ? new Date(String(req.query.dueFrom)) : null;
+  const dueTo = req.query.dueTo ? new Date(String(req.query.dueTo)) : null;
+  if (dueFrom && Number.isNaN(dueFrom.getTime())) {
+    throw new AppError("invalid dueFrom date", 400);
+  }
+  if (dueTo && Number.isNaN(dueTo.getTime())) {
+    throw new AppError("invalid dueTo date", 400);
+  }
 
   const where = {
     userId,
     fyStartYear: selectedFinancialYearStart,
+    status: statusFilter
+      ? statusFilter
+      : {
+          in: [PENDING_PAYMENT_STATUS.PENDING, PENDING_PAYMENT_STATUS.PARTIAL],
+        },
+    ...(dueFrom || dueTo
+      ? {
+          dueDate: {
+            ...(dueFrom ? { gte: dueFrom } : {}),
+            ...(dueTo ? { lte: dueTo } : {}),
+          },
+        }
+      : {}),
     ...(search
       ? {
           OR: [
