@@ -7,7 +7,11 @@ const {
   parsePagination,
   parseSort,
 } = require("../utils/listQuery");
-const { getSelectedFinancialYearStartForUser, syncPendingPaymentAmounts } = require("../utils/payments");
+const {
+  PAYMENT_MODES,
+  getSelectedFinancialYearStartForUser,
+  syncPendingPaymentAmounts,
+} = require("../utils/payments");
 
 const RECEIPT_SORT_FIELDS = [
   "serialNo",
@@ -33,6 +37,10 @@ const listPaymentReceipts = asyncHandler(async (req, res) => {
   const pagination = parsePagination(req.query);
   const { sortBy, sortOrder } = parseSort(req.query, RECEIPT_SORT_FIELDS, "date", "desc");
   const search = normalizeSearch(req.query.search);
+  const normalizedPaymentModeSearch = search ? String(search).toUpperCase() : null;
+  const hasPaymentModeSearch =
+    normalizedPaymentModeSearch &&
+    Object.values(PAYMENT_MODES).includes(normalizedPaymentModeSearch);
 
   const where = {
     userId,
@@ -45,7 +53,9 @@ const listPaymentReceipts = asyncHandler(async (req, res) => {
               ? { serialNo: Number.parseInt(search, 10) }
               : undefined,
             { pendingPayment: { accountName: { contains: search, mode: "insensitive" } } },
-            { paymentMode: { equals: String(search).toUpperCase() } },
+            hasPaymentModeSearch
+              ? { paymentMode: { equals: normalizedPaymentModeSearch } }
+              : undefined,
           ].filter(Boolean),
         }
       : {}),
