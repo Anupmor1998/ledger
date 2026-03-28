@@ -100,7 +100,11 @@ async function syncCustomerPendingPaymentNames(tx, userId, customerId, accountNa
   });
 
   await tx.paymentReceipt.updateMany({
-    where: { pendingPaymentId: { in: pendingPaymentIds } },
+    where: {
+      paymentAllocations: {
+        some: { pendingPaymentId: { in: pendingPaymentIds } },
+      },
+    },
     data: { accountName },
   });
 
@@ -433,9 +437,13 @@ const previewMergeCustomer = asyncHandler(async (req, res) => {
       }),
       prisma.paymentReceipt.count({
         where: {
-          pendingPayment: {
-            userId,
-            order: { customerId: sourceId },
+          paymentAllocations: {
+            some: {
+              pendingPayment: {
+                userId,
+                order: { customerId: sourceId },
+              },
+            },
           },
         },
       }),
@@ -520,7 +528,11 @@ const mergeCustomer = asyncHandler(async (req, res) => {
       });
 
       await tx.paymentReceipt.updateMany({
-        where: { pendingPaymentId: { in: pendingPaymentIds } },
+        where: {
+          paymentAllocations: {
+            some: { pendingPaymentId: { in: pendingPaymentIds } },
+          },
+        },
         data: { accountName: mergedAccountName },
       });
     }

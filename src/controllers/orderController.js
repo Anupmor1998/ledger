@@ -247,23 +247,45 @@ async function syncPendingPaymentForCompletedOrder(tx, order) {
     select: {
       id: true,
       amountReceived: true,
+      paymentAllocations: {
+        select: {
+          isFinalSettlement: true,
+        },
+      },
     },
   });
 
   if (existing) {
     const amountReceived = round2(existing.amountReceived || 0);
-    const balanceAmount = round2(Math.max(amountDue - amountReceived, 0));
-    const status = getPendingPaymentStatus(amountDue, amountReceived);
+    const hasFinalSettlement = existing.paymentAllocations.some(
+      (allocation) => allocation.isFinalSettlement
+    );
+    const discountAmount = hasFinalSettlement
+      ? round2(Math.max(amountDue - amountReceived, 0))
+      : 0;
+    const finalSettledAmount = hasFinalSettlement ? amountReceived : null;
+    const balanceAmount = hasFinalSettlement
+      ? 0
+      : round2(Math.max(amountDue - amountReceived, 0));
+    const status = getPendingPaymentStatus({
+      amountDue,
+      amountReceived,
+      discountAmount,
+      hasFinalSettlement,
+    });
 
     return tx.pendingPayment.update({
       where: { id: existing.id },
       data: {
         accountName,
         amountDue,
+        finalSettledAmount,
+        discountAmount,
+        discountPercent: amountDue > 0 ? round2((discountAmount / amountDue) * 100) : 0,
         balanceAmount,
         status,
         dueDate,
-        settledAt: status === "PAID" ? new Date() : null,
+        settledAt: status === "PAID" || status === "SETTLED" ? new Date() : null,
       },
     });
   }
@@ -280,6 +302,9 @@ async function syncPendingPaymentForCompletedOrder(tx, order) {
           accountName,
           amountDue,
           amountReceived: 0,
+          finalSettledAmount: null,
+          discountAmount: 0,
+          discountPercent: 0,
           balanceAmount: amountDue,
           status: "PENDING",
           dueDate,
@@ -305,7 +330,7 @@ async function syncPendingPaymentForOrder(tx, order) {
     where: { orderId: order.id },
     select: {
       id: true,
-      paymentReceipts: { select: { id: true }, take: 1 },
+      paymentAllocations: { select: { id: true }, take: 1 },
     },
   });
 
@@ -313,7 +338,7 @@ async function syncPendingPaymentForOrder(tx, order) {
     return null;
   }
 
-  if (existing.paymentReceipts.length > 0) {
+  if (existing.paymentAllocations.length > 0) {
     throw new AppError(
       "cannot change completed order status after receiving payment against it",
       400

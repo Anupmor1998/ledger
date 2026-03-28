@@ -28,6 +28,24 @@ function normalizeReceipt(receipt) {
   return {
     ...receipt,
     amount: Number(receipt.amount),
+    paymentAllocations: (receipt.paymentAllocations || []).map((allocation) => ({
+      ...allocation,
+      allocatedAmount: Number(allocation.allocatedAmount),
+      pendingPayment: allocation.pendingPayment
+        ? {
+            ...allocation.pendingPayment,
+            amountDue: Number(allocation.pendingPayment.amountDue),
+            amountReceived: Number(allocation.pendingPayment.amountReceived),
+            finalSettledAmount:
+              allocation.pendingPayment.finalSettledAmount === null
+                ? null
+                : Number(allocation.pendingPayment.finalSettledAmount),
+            discountAmount: Number(allocation.pendingPayment.discountAmount || 0),
+            discountPercent: Number(allocation.pendingPayment.discountPercent || 0),
+            balanceAmount: Number(allocation.pendingPayment.balanceAmount),
+          }
+        : null,
+    })),
   };
 }
 
@@ -89,10 +107,37 @@ const listPaymentReceipts = asyncHandler(async (req, res) => {
             Number.isFinite(Number.parseInt(search, 10))
               ? { serialNo: Number.parseInt(search, 10) }
               : undefined,
-            { pendingPayment: { accountName: { contains: search, mode: "insensitive" } } },
-            hasPaymentModeSearch
-              ? { paymentMode: { equals: normalizedPaymentModeSearch } }
+            {
+              paymentAllocations: {
+                some: {
+                  pendingPayment: {
+                    order: {
+                      customer: {
+                        OR: [
+                          { name: { contains: search, mode: "insensitive" } },
+                          { firmName: { contains: search, mode: "insensitive" } },
+                        ],
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            Number.isFinite(Number.parseInt(search, 10))
+              ? {
+                  paymentAllocations: {
+                    some: {
+                      pendingPayment: {
+                        OR: [
+                          { serialNo: Number.parseInt(search, 10) },
+                          { order: { orderNo: Number.parseInt(search, 10) } },
+                        ],
+                      },
+                    },
+                  },
+                }
               : undefined,
+            hasPaymentModeSearch ? { paymentMode: { equals: normalizedPaymentModeSearch } } : undefined,
           ].filter(Boolean),
         }
       : {}),
@@ -104,12 +149,23 @@ const listPaymentReceipts = asyncHandler(async (req, res) => {
     skip: pagination.skip,
     take: pagination.take,
     include: {
-      pendingPayment: {
-        select: {
-          id: true,
-          serialNo: true,
-          orderId: true,
-          order: { select: { orderNo: true } },
+      paymentAllocations: {
+        include: {
+          pendingPayment: {
+            select: {
+              id: true,
+              serialNo: true,
+              amountDue: true,
+              amountReceived: true,
+              finalSettledAmount: true,
+              discountAmount: true,
+              discountPercent: true,
+              balanceAmount: true,
+              status: true,
+              orderId: true,
+              order: { select: { orderNo: true } },
+            },
+          },
         },
       },
     },
@@ -132,12 +188,23 @@ const getPaymentReceiptById = asyncHandler(async (req, res) => {
   const receipt = await prisma.paymentReceipt.findFirst({
     where: { id, userId },
     include: {
-      pendingPayment: {
-        select: {
-          id: true,
-          serialNo: true,
-          orderId: true,
-          order: { select: { orderNo: true } },
+      paymentAllocations: {
+        include: {
+          pendingPayment: {
+            select: {
+              id: true,
+              serialNo: true,
+              amountDue: true,
+              amountReceived: true,
+              finalSettledAmount: true,
+              discountAmount: true,
+              discountPercent: true,
+              balanceAmount: true,
+              status: true,
+              orderId: true,
+              order: { select: { orderNo: true } },
+            },
+          },
         },
       },
     },
@@ -156,7 +223,12 @@ const deletePaymentReceipt = asyncHandler(async (req, res) => {
 
   const receipt = await prisma.paymentReceipt.findFirst({
     where: { id, userId },
-    select: { id: true, pendingPaymentId: true },
+    select: {
+      id: true,
+      paymentAllocations: {
+        select: { pendingPaymentId: true },
+      },
+    },
   });
 
   if (!receipt) {
@@ -167,8 +239,10 @@ const deletePaymentReceipt = asyncHandler(async (req, res) => {
     await tx.paymentReceipt.delete({
       where: { id: receipt.id },
     });
-    if (receipt.pendingPaymentId) {
-      await syncPendingPaymentAmounts(tx, receipt.pendingPaymentId);
+
+    const pendingPaymentIds = [...new Set(receipt.paymentAllocations.map((item) => item.pendingPaymentId))];
+    for (const pendingPaymentId of pendingPaymentIds) {
+      await syncPendingPaymentAmounts(tx, pendingPaymentId);
     }
   });
 

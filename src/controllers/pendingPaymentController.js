@@ -14,6 +14,7 @@ const {
   getSelectedFinancialYearStartForUser,
   getNextPaymentReceiptSerialNo,
   isPaymentReceiptSerialConflict,
+  round2,
   syncPendingPaymentAmounts,
 } = require("../utils/payments");
 
@@ -23,6 +24,7 @@ const PENDING_PAYMENT_SORT_FIELDS = [
   "accountName",
   "amountDue",
   "amountReceived",
+  "discountAmount",
   "balanceAmount",
   "status",
   "dueDate",
@@ -43,8 +45,16 @@ function normalizePendingPayment(row) {
     ...row,
     amountDue: Number(row.amountDue),
     amountReceived: Number(row.amountReceived),
+    finalSettledAmount:
+      row.finalSettledAmount === null ? null : Number(row.finalSettledAmount),
+    discountAmount: Number(row.discountAmount || 0),
+    discountPercent: Number(row.discountPercent || 0),
     balanceAmount: Number(row.balanceAmount),
   };
+}
+
+function getCustomerDisplayName(customer) {
+  return String(customer?.firmName || customer?.name || "").trim();
 }
 
 const listPendingPayments = asyncHandler(async (req, res) => {
@@ -63,9 +73,14 @@ const listPendingPayments = asyncHandler(async (req, res) => {
   const statusFilter = req.query.status ? String(req.query.status).toUpperCase() : null;
   if (
     statusFilter &&
-    ![PENDING_PAYMENT_STATUS.PENDING, PENDING_PAYMENT_STATUS.PARTIAL].includes(statusFilter)
+    ![
+      PENDING_PAYMENT_STATUS.PENDING,
+      PENDING_PAYMENT_STATUS.PARTIAL,
+      PENDING_PAYMENT_STATUS.PAID,
+      PENDING_PAYMENT_STATUS.SETTLED,
+    ].includes(statusFilter)
   ) {
-    throw new AppError("status must be one of: PENDING, PARTIAL", 400);
+    throw new AppError("status must be one of: PENDING, PARTIAL, PAID, SETTLED", 400);
   }
   const dueFrom = req.query.dueFrom ? new Date(String(req.query.dueFrom)) : null;
   const dueTo = req.query.dueTo ? new Date(String(req.query.dueTo)) : null;
@@ -96,9 +111,7 @@ const listPendingPayments = asyncHandler(async (req, res) => {
       ? {
           OR: [
             { accountName: { contains: search, mode: "insensitive" } },
-            hasNumericSearch
-              ? { serialNo: searchAsNumber }
-              : undefined,
+            hasNumericSearch ? { serialNo: searchAsNumber } : undefined,
             { order: { customer: { name: { contains: search, mode: "insensitive" } } } },
             { order: { customer: { firmName: { contains: search, mode: "insensitive" } } } },
             hasNumericSearch ? { order: { orderNo: searchAsNumber } } : undefined,
@@ -124,7 +137,13 @@ const listPendingPayments = asyncHandler(async (req, res) => {
     },
   });
 
-  const normalized = rows.map(normalizePendingPayment);
+  const normalized = rows.map((row) =>
+    normalizePendingPayment({
+      ...row,
+      customerId: row.order?.customer?.id || null,
+      customerDisplayName: getCustomerDisplayName(row.order?.customer),
+    })
+  );
   if (!pagination.enabled) {
     return res.json(normalized);
   }
@@ -133,77 +152,142 @@ const listPendingPayments = asyncHandler(async (req, res) => {
   return res.json(buildPaginatedResponse(normalized, total, pagination.page, pagination.limit));
 });
 
-const receivePendingPayment = asyncHandler(async (req, res) => {
+const createBulkPendingPaymentReceipt = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
-  const { id } = req.params;
-  const { date, paymentMode, amount, paymentReceivedDate } = req.body || {};
+  const { date, paymentMode, paymentReceivedDate, entries } = req.body || {};
 
-  if (!date || !paymentMode || amount === undefined || !paymentReceivedDate) {
-    throw new AppError("date, paymentMode, amount and paymentReceivedDate are required", 400);
+  if (!date || !paymentMode || !paymentReceivedDate || !Array.isArray(entries) || entries.length === 0) {
+    throw new AppError("date, paymentMode, paymentReceivedDate and entries are required", 400);
   }
 
   if (!Object.values(PAYMENT_MODES).includes(String(paymentMode).toUpperCase())) {
     throw new AppError("paymentMode must be one of: CASH, CHEQUE, ONLINE, UPI", 400);
   }
 
-  if (!Number.isFinite(Number(amount)) || Number(amount) <= 0) {
-    throw new AppError("amount must be greater than 0", 400);
-  }
-
   const parsedDate = parseDateOrThrow(date, "date");
   const parsedReceivedDate = parseDateOrThrow(paymentReceivedDate, "paymentReceivedDate");
   const receiptFyStartYear = getFinancialYearStartYear(parsedDate);
+
+  const normalizedEntries = entries.map((entry) => ({
+    pendingPaymentId: String(entry?.pendingPaymentId || "").trim(),
+    allocatedAmount: Number(entry?.allocatedAmount),
+    isFinalSettlement: Boolean(entry?.isFinalSettlement),
+  }));
+
+  if (normalizedEntries.some((entry) => !entry.pendingPaymentId)) {
+    throw new AppError("every selected payment must include pendingPaymentId", 400);
+  }
+  if (new Set(normalizedEntries.map((entry) => entry.pendingPaymentId)).size !== normalizedEntries.length) {
+    throw new AppError("duplicate pending payments are not allowed in one receipt", 400);
+  }
+  if (normalizedEntries.some((entry) => !Number.isFinite(entry.allocatedAmount) || entry.allocatedAmount <= 0)) {
+    throw new AppError("allocatedAmount must be greater than 0 for every selected payment", 400);
+  }
+
   let createdReceipt;
 
   for (let attempt = 0; attempt < RECEIPT_SERIAL_RETRY_LIMIT; attempt += 1) {
     try {
       createdReceipt = await prisma.$transaction(async (tx) => {
-        const pendingPayment = await tx.pendingPayment.findFirst({
-          where: { id, userId },
-          include: {
-            order: { select: { orderNo: true } },
-          },
-        });
-
-        if (!pendingPayment) {
-          throw new AppError("pending payment not found", 404);
-        }
-        if (pendingPayment.status === "PAID") {
-          throw new AppError("pending payment is already fully paid", 400);
-        }
-
-        const numericAmount = Number(amount);
-        if (numericAmount > Number(pendingPayment.balanceAmount)) {
-          throw new AppError("received amount cannot be greater than balance amount", 400);
-        }
-
-        const serialNo = await getNextPaymentReceiptSerialNo(tx, userId, receiptFyStartYear);
-        const receipt = await tx.paymentReceipt.create({
-          data: {
+        const pendingPayments = await tx.pendingPayment.findMany({
+          where: {
+            id: { in: normalizedEntries.map((entry) => entry.pendingPaymentId) },
             userId,
-            pendingPaymentId: pendingPayment.id,
-            fyStartYear: receiptFyStartYear,
-            serialNo,
-            accountName: pendingPayment.accountName,
-            date: parsedDate,
-            paymentMode: String(paymentMode).toUpperCase(),
-            amount: numericAmount,
-            paymentReceivedDate: parsedReceivedDate,
+            status: {
+              in: [PENDING_PAYMENT_STATUS.PENDING, PENDING_PAYMENT_STATUS.PARTIAL],
+            },
           },
           include: {
-            pendingPayment: {
+            order: {
               select: {
-                id: true,
-                serialNo: true,
-                orderId: true,
-                order: { select: { orderNo: true } },
+                orderNo: true,
+                customer: { select: { id: true, name: true, firmName: true } },
               },
             },
           },
         });
 
-        await syncPendingPaymentAmounts(tx, pendingPayment.id);
-        return receipt;
+        if (pendingPayments.length !== normalizedEntries.length) {
+          throw new AppError("one or more selected pending payments were not found", 404);
+        }
+
+        const paymentById = new Map(pendingPayments.map((item) => [item.id, item]));
+        const customerIds = new Set(
+          pendingPayments.map((item) => String(item.order?.customer?.id || ""))
+        );
+
+        if (customerIds.size !== 1) {
+          throw new AppError("selected pending payments must belong to the same customer", 400);
+        }
+
+        const preparedAllocations = normalizedEntries.map((entry) => {
+          const pendingPayment = paymentById.get(entry.pendingPaymentId);
+          const balanceAmount = Number(pendingPayment.balanceAmount || 0);
+
+          if (entry.allocatedAmount > balanceAmount) {
+            throw new AppError(
+              `allocated amount cannot be greater than balance for pending ${pendingPayment.serialNo}`,
+              400
+            );
+          }
+
+          return {
+            pendingPaymentId: pendingPayment.id,
+            allocatedAmount: round2(entry.allocatedAmount),
+            isFinalSettlement: entry.isFinalSettlement,
+          };
+        });
+
+        const totalAmount = round2(
+          preparedAllocations.reduce((sum, entry) => sum + entry.allocatedAmount, 0)
+        );
+
+        const accountName = getCustomerDisplayName(pendingPayments[0].order?.customer);
+        const serialNo = await getNextPaymentReceiptSerialNo(tx, userId, receiptFyStartYear);
+        const receipt = await tx.paymentReceipt.create({
+          data: {
+            userId,
+            fyStartYear: receiptFyStartYear,
+            serialNo,
+            accountName,
+            date: parsedDate,
+            paymentMode: String(paymentMode).toUpperCase(),
+            amount: totalAmount,
+            paymentReceivedDate: parsedReceivedDate,
+          },
+        });
+
+        await tx.paymentAllocation.createMany({
+          data: preparedAllocations.map((entry) => ({
+            userId,
+            paymentReceiptId: receipt.id,
+            pendingPaymentId: entry.pendingPaymentId,
+            allocatedAmount: entry.allocatedAmount,
+            isFinalSettlement: entry.isFinalSettlement,
+          })),
+        });
+
+        for (const entry of preparedAllocations) {
+          await syncPendingPaymentAmounts(tx, entry.pendingPaymentId);
+        }
+
+        return tx.paymentReceipt.findUnique({
+          where: { id: receipt.id },
+          include: {
+            paymentAllocations: {
+              include: {
+                pendingPayment: {
+                  select: {
+                    id: true,
+                    serialNo: true,
+                    orderId: true,
+                    order: { select: { orderNo: true } },
+                  },
+                },
+              },
+            },
+          },
+        });
       });
       break;
     } catch (error) {
@@ -217,10 +301,14 @@ const receivePendingPayment = asyncHandler(async (req, res) => {
   return res.status(201).json({
     ...createdReceipt,
     amount: Number(createdReceipt.amount),
+    paymentAllocations: (createdReceipt.paymentAllocations || []).map((allocation) => ({
+      ...allocation,
+      allocatedAmount: Number(allocation.allocatedAmount),
+    })),
   });
 });
 
 module.exports = {
   listPendingPayments,
-  receivePendingPayment,
+  createBulkPendingPaymentReceipt,
 };
