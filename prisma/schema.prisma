@@ -45,6 +45,7 @@ model Customer {
   name      String
   gstNo     String?
   address   String
+  remark    String?
   email     String?
   phone     String
   commissionBase    CommissionBase @default(PERCENT)
@@ -65,6 +66,7 @@ model Manufacturer {
   firmName  String?
   name      String
   address   String?
+  remark    String?
   email     String?
   phone     String
   createdAt DateTime @default(now())
