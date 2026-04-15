@@ -59,7 +59,6 @@ function mergeManufacturerFields(base, incoming) {
     firmName: base.firmName || incoming.firmName || null,
     name: base.name || incoming.name || null,
     address: base.address || incoming.address || null,
-    remark: base.remark || incoming.remark || null,
     email: base.email || incoming.email || null,
     phone: base.phone || incoming.phone || null,
   };
@@ -98,9 +97,9 @@ const createManufacturer = asyncHandler(async (req, res) => {
     throw new AppError(validationError, 400);
   }
 
-  const { firmName, name, address, remark, email, phone } = req.body;
+  const { firmName, name, address, email, phone } = req.body;
   const manufacturer = await prisma.manufacturer.create({
-    data: { userId, firmName, name, address, remark, email, phone },
+    data: { userId, firmName, name, address, email, phone },
   });
   return res.status(201).json(manufacturer);
 });
@@ -204,7 +203,7 @@ const updateManufacturer = asyncHandler(async (req, res) => {
     throw new AppError(validationError, 400);
   }
 
-  const { firmName, name, address, remark, email, phone } = req.body;
+  const { firmName, name, address, email, phone } = req.body;
   const existing = await prisma.manufacturer.findFirst({
     where: { id, userId },
     select: { id: true },
@@ -214,7 +213,7 @@ const updateManufacturer = asyncHandler(async (req, res) => {
   }
   const manufacturer = await prisma.manufacturer.update({
     where: { id },
-    data: { firmName, name, address, remark, email, phone },
+    data: { firmName, name, address, email, phone },
   });
 
   return res.json(manufacturer);
@@ -269,7 +268,6 @@ const checkManufacturerDuplicates = asyncHandler(async (req, res) => {
     firmName: req.body.firmName,
     name: req.body.name,
     address: req.body.address,
-    remark: req.body.remark,
     email: req.body.email,
     phone: req.body.phone,
   };
@@ -362,7 +360,6 @@ const mergeManufacturer = asyncHandler(async (req, res) => {
         firmName: target.firmName || source.firmName,
         name: target.name || source.name,
         address: target.address || source.address,
-        remark: target.remark || source.remark,
         email: target.email || source.email,
         phone: target.phone || source.phone,
       },
@@ -435,7 +432,6 @@ const resolveManufacturerDuplicates = asyncHandler(async (req, res) => {
           firmName: draft.firmName || null,
           name: draft.name,
           address: draft.address || null,
-          remark: draft.remark || null,
           email: draft.email || null,
           phone: draft.phone,
         }
@@ -463,7 +459,6 @@ const resolveManufacturerDuplicates = asyncHandler(async (req, res) => {
               firmName: targetManufacturer.firmName || draft.firmName || null,
               name: targetManufacturer.name || draft.name,
               address: targetManufacturer.address || draft.address || null,
-              remark: targetManufacturer.remark || draft.remark || null,
               email: targetManufacturer.email || draft.email || null,
               phone: targetManufacturer.phone || draft.phone,
             }
@@ -471,7 +466,6 @@ const resolveManufacturerDuplicates = asyncHandler(async (req, res) => {
               firmName: targetManufacturer.firmName,
               name: targetManufacturer.name,
               address: targetManufacturer.address,
-              remark: targetManufacturer.remark,
               email: targetManufacturer.email,
               phone: targetManufacturer.phone,
             }

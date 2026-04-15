@@ -41,7 +41,10 @@ const getMyPreferences = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { theme: true, selectedFinancialYearStart: true },
+    select: {
+      theme: true,
+      selectedFinancialYearStart: true,
+    },
   });
 
   if (!user) {
@@ -88,7 +91,10 @@ const updateMyPreferences = asyncHandler(async (req, res) => {
   const updated = await prisma.user.update({
     where: { id: userId },
     data,
-    select: { theme: true, selectedFinancialYearStart: true },
+    select: {
+      theme: true,
+      selectedFinancialYearStart: true,
+    },
   });
 
   const effectiveFinancialYear =
@@ -168,6 +174,41 @@ const updateMyProfile = asyncHandler(async (req, res) => {
     selectedFinancialYearStart:
       updated.selectedFinancialYearStart ?? getFinancialYearStartYear(),
   });
+});
+
+const listMyRemarkTemplates = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+  const templates = await prisma.remarkTemplate.findMany({
+    where: { userId },
+    orderBy: { createdAt: "asc" },
+  });
+  return res.json(templates);
+});
+
+const createMyRemarkTemplate = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+  const text = String(req.body?.text || "").trim();
+
+  if (!text) {
+    throw new AppError("text is required", 400);
+  }
+
+  const created = await prisma.remarkTemplate.create({
+    data: { userId, text },
+  });
+  return res.status(201).json(created);
+});
+
+const deleteMyRemarkTemplate = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+  const { id } = req.params;
+  const deleted = await prisma.remarkTemplate.deleteMany({
+    where: { id, userId },
+  });
+  if (deleted.count === 0) {
+    throw new AppError("remark template not found", 404);
+  }
+  return res.status(204).send();
 });
 
 const listMyWhatsAppGroups = asyncHandler(async (req, res) => {
@@ -255,6 +296,9 @@ module.exports = {
   getMyPreferences,
   updateMyPreferences,
   updateMyProfile,
+  listMyRemarkTemplates,
+  createMyRemarkTemplate,
+  deleteMyRemarkTemplate,
   listMyWhatsAppGroups,
   createMyWhatsAppGroup,
   updateMyWhatsAppGroup,

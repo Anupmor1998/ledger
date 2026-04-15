@@ -21,6 +21,7 @@ model User {
   pendingPayments     PendingPayment[]
   paymentReceipts     PaymentReceipt[]
   paymentAllocations  PaymentAllocation[]
+  remarkTemplates     RemarkTemplate[]
   qualities           Quality[]
   whatsappGroups      WhatsAppGroup[]
   passwordResetTokens PasswordResetToken[]
@@ -45,7 +46,6 @@ model Customer {
   name      String
   gstNo     String?
   address   String
-  remark    String?
   email     String?
   phone     String
   commissionBase    CommissionBase @default(PERCENT)
@@ -66,7 +66,6 @@ model Manufacturer {
   firmName  String?
   name      String
   address   String?
-  remark    String?
   email     String?
   phone     String
   createdAt DateTime @default(now())
@@ -237,4 +236,16 @@ model WhatsAppGroup {
 
   @@index([userId])
   @@unique([userId, name])
+}
+
+model RemarkTemplate {
+  id        String   @id @default(uuid())
+  userId    String
+  text      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@unique([userId, text])
 }

@@ -5,6 +5,9 @@ const {
   getMyPreferences,
   updateMyPreferences,
   updateMyProfile,
+  listMyRemarkTemplates,
+  createMyRemarkTemplate,
+  deleteMyRemarkTemplate,
   listMyWhatsAppGroups,
   createMyWhatsAppGroup,
   updateMyWhatsAppGroup,
@@ -19,6 +22,9 @@ router.get("/", listUsers);
 router.put("/me", updateMyProfile);
 router.get("/me/preferences", getMyPreferences);
 router.put("/me/preferences", updateMyPreferences);
+router.get("/me/remark-templates", listMyRemarkTemplates);
+router.post("/me/remark-templates", createMyRemarkTemplate);
+router.delete("/me/remark-templates/:id", deleteMyRemarkTemplate);
 router.get("/me/whatsapp-groups", listMyWhatsAppGroups);
 router.post("/me/whatsapp-groups", createMyWhatsAppGroup);
 router.put("/me/whatsapp-groups/:id", updateMyWhatsAppGroup);

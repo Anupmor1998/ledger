@@ -66,7 +66,6 @@ function mergeCustomerFields(base, incoming) {
     name: base.name || incoming.name || null,
     gstNo: base.gstNo || incoming.gstNo || null,
     address: base.address || incoming.address || null,
-    remark: base.remark || incoming.remark || null,
     email: base.email || incoming.email || null,
     phone: base.phone || incoming.phone || null,
     commissionBase: base.commissionBase || incoming.commissionBase || COMMISSION_BASE.PERCENT,
@@ -198,9 +197,9 @@ const createCustomer = asyncHandler(async (req, res) => {
   }
 
   const commissionData = buildCommissionData(req.body);
-  const { firmName, name, gstNo, address, remark, email, phone } = req.body;
+  const { firmName, name, gstNo, address, email, phone } = req.body;
   const customer = await prisma.customer.create({
-    data: { userId, firmName, name, gstNo, address, remark, email, phone, ...commissionData },
+    data: { userId, firmName, name, gstNo, address, email, phone, ...commissionData },
   });
   return res.status(201).json(customer);
 });
@@ -305,7 +304,7 @@ const updateCustomer = asyncHandler(async (req, res) => {
     throw new AppError(validationError, 400);
   }
 
-  const { firmName, name, gstNo, address, remark, email, phone } = req.body;
+  const { firmName, name, gstNo, address, email, phone } = req.body;
   const existing = await prisma.customer.findFirst({
     where: { id, userId },
     select: {
@@ -328,7 +327,7 @@ const updateCustomer = asyncHandler(async (req, res) => {
 
   const customer = await prisma.customer.update({
     where: { id },
-    data: { firmName, name, gstNo, address, remark, email, phone, ...commissionData },
+    data: { firmName, name, gstNo, address, email, phone, ...commissionData },
   });
 
   return res.json(customer);
@@ -384,7 +383,6 @@ const checkCustomerDuplicates = asyncHandler(async (req, res) => {
     name: req.body.name,
     gstNo: req.body.gstNo,
     address: req.body.address,
-    remark: req.body.remark,
     email: req.body.email,
     phone: req.body.phone,
     commissionBase: req.body.commissionBase,
@@ -502,7 +500,6 @@ const mergeCustomer = asyncHandler(async (req, res) => {
         name: target.name || source.name,
         gstNo: target.gstNo || source.gstNo,
         address: target.address || source.address,
-        remark: target.remark || source.remark,
         email: target.email || source.email,
         phone: target.phone || source.phone,
       },
@@ -605,7 +602,6 @@ const resolveCustomerDuplicates = asyncHandler(async (req, res) => {
           name: draft.name,
           gstNo: draft.gstNo || null,
           address: draft.address,
-          remark: draft.remark || null,
           email: draft.email || null,
           phone: draft.phone,
           ...commissionData,
@@ -635,7 +631,6 @@ const resolveCustomerDuplicates = asyncHandler(async (req, res) => {
               name: targetCustomer.name || draft.name,
               gstNo: targetCustomer.gstNo || draft.gstNo || null,
               address: targetCustomer.address || draft.address,
-              remark: targetCustomer.remark || draft.remark || null,
               email: targetCustomer.email || draft.email || null,
               phone: targetCustomer.phone || draft.phone,
               commissionBase: targetCustomer.commissionBase || commissionData.commissionBase,
@@ -649,7 +644,6 @@ const resolveCustomerDuplicates = asyncHandler(async (req, res) => {
               name: targetCustomer.name,
               gstNo: targetCustomer.gstNo,
               address: targetCustomer.address,
-              remark: targetCustomer.remark,
               email: targetCustomer.email,
               phone: targetCustomer.phone,
               commissionBase: targetCustomer.commissionBase,
