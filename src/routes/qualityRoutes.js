@@ -6,6 +6,8 @@ const {
   getQualityById,
   updateQuality,
   deleteQuality,
+  archiveQuality,
+  restoreQuality,
 } = require("../controllers/qualityController");
 
 const router = express.Router();
@@ -16,6 +18,8 @@ router.post("/", createQuality);
 router.get("/", listQualities);
 router.get("/:id", getQualityById);
 router.put("/:id", updateQuality);
+router.post("/:id/archive", archiveQuality);
+router.post("/:id/restore", restoreQuality);
 router.delete("/:id", deleteQuality);
 
 module.exports = router;

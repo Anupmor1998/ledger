@@ -80,6 +80,7 @@ model Quality {
   id     String  @id @default(uuid())
   userId String
   name   String
+  isActive Boolean @default(true)
   user   User    @relation(fields: [userId], references: [id], onDelete: Restrict)
   orders Order[]
 

@@ -23,7 +23,23 @@ const createQuality = asyncHandler(async (req, res) => {
     throw new AppError(validationError, 400);
   }
 
-  const { name } = req.body;
+  const name = String(req.body.name || "").trim();
+  const existing = await prisma.quality.findFirst({
+    where: { userId, name },
+  });
+
+  if (existing) {
+    if (existing.isActive) {
+      throw new AppError("quality already exists", 409);
+    }
+
+    const reactivated = await prisma.quality.update({
+      where: { id: existing.id },
+      data: { isActive: true },
+    });
+    return res.status(200).json(reactivated);
+  }
+
   const quality = await prisma.quality.create({
     data: { userId, name },
   });
@@ -37,9 +53,11 @@ const listQualities = asyncHandler(async (req, res) => {
   const pagination = parsePagination(req.query);
   const { sortBy, sortOrder } = parseSort(req.query, QUALITY_SORT_FIELDS, "name", "asc");
   const search = normalizeSearch(req.query.search);
+  const includeArchived = String(req.query.includeArchived || "").toLowerCase() === "true";
 
   const where = {
     userId,
+    ...(!includeArchived ? { isActive: true } : {}),
     ...(search
       ? {
         name: { contains: search, mode: "insensitive" },
@@ -52,26 +70,52 @@ const listQualities = asyncHandler(async (req, res) => {
     orderBy: { [sortBy]: sortOrder },
     skip: pagination.skip,
     take: pagination.take,
+    include: {
+      _count: {
+        select: {
+          orders: true,
+        },
+      },
+    },
   });
 
+  const normalizedQualities = qualities.map((quality) => ({
+    ...quality,
+    orderCount: quality._count?.orders || 0,
+    _count: undefined,
+  }));
+
   if (!pagination.enabled) {
-    return res.json(qualities);
+    return res.json(normalizedQualities);
   }
 
   const total = await prisma.quality.count({ where });
-  return res.json(buildPaginatedResponse(qualities, total, pagination.page, pagination.limit));
+  return res.json(buildPaginatedResponse(normalizedQualities, total, pagination.page, pagination.limit));
 });
 
 const getQualityById = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
   const { id } = req.params;
-  const quality = await prisma.quality.findFirst({ where: { id, userId } });
+  const quality = await prisma.quality.findFirst({
+    where: { id, userId },
+    include: {
+      _count: {
+        select: {
+          orders: true,
+        },
+      },
+    },
+  });
 
   if (!quality) {
     throw new AppError("quality not found", 404);
   }
 
-  return res.json(quality);
+  return res.json({
+    ...quality,
+    orderCount: quality._count?.orders || 0,
+    _count: undefined,
+  });
 });
 
 const updateQuality = asyncHandler(async (req, res) => {
@@ -83,7 +127,7 @@ const updateQuality = asyncHandler(async (req, res) => {
     throw new AppError(validationError, 400);
   }
 
-  const { name } = req.body;
+  const name = req.body.name === undefined ? undefined : String(req.body.name || "").trim();
   const existing = await prisma.quality.findFirst({ where: { id, userId }, select: { id: true } });
   if (!existing) {
     throw new AppError("quality not found", 404);
@@ -99,11 +143,78 @@ const updateQuality = asyncHandler(async (req, res) => {
 const deleteQuality = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
   const { id } = req.params;
+  const quality = await prisma.quality.findFirst({
+    where: { id, userId },
+    include: {
+      _count: {
+        select: {
+          orders: true,
+        },
+      },
+    },
+  });
+
+  if (!quality) {
+    throw new AppError("quality not found", 404);
+  }
+
+  if ((quality._count?.orders || 0) > 0) {
+    throw new AppError("quality is used in orders and can only be archived", 400);
+  }
+
   const deleted = await prisma.quality.deleteMany({ where: { id, userId } });
   if (deleted.count === 0) {
     throw new AppError("quality not found", 404);
   }
   return res.status(204).send();
+});
+
+const archiveQuality = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+  const { id } = req.params;
+
+  const quality = await prisma.quality.findFirst({
+    where: { id, userId },
+    include: {
+      _count: {
+        select: {
+          orders: true,
+        },
+      },
+    },
+  });
+
+  if (!quality) {
+    throw new AppError("quality not found", 404);
+  }
+
+  if ((quality._count?.orders || 0) === 0) {
+    throw new AppError("unused quality can be deleted directly", 400);
+  }
+
+  const updated = await prisma.quality.update({
+    where: { id },
+    data: { isActive: false },
+  });
+
+  return res.json(updated);
+});
+
+const restoreQuality = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+  const { id } = req.params;
+
+  const quality = await prisma.quality.findFirst({ where: { id, userId }, select: { id: true } });
+  if (!quality) {
+    throw new AppError("quality not found", 404);
+  }
+
+  const updated = await prisma.quality.update({
+    where: { id },
+    data: { isActive: true },
+  });
+
+  return res.json(updated);
 });
 
 module.exports = {
@@ -112,4 +223,6 @@ module.exports = {
   getQualityById,
   updateQuality,
   deleteQuality,
+  archiveQuality,
+  restoreQuality,
 };

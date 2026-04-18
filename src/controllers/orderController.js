@@ -361,15 +361,23 @@ async function resolveQualityId(tx, userId, qualityName) {
 
   const existing = await tx.quality.findFirst({
     where: { userId, name: normalized },
-    select: { id: true },
+    select: { id: true, isActive: true },
   });
 
   if (existing) {
+    if (!existing.isActive) {
+      const reactivated = await tx.quality.update({
+        where: { id: existing.id },
+        data: { isActive: true },
+        select: { id: true },
+      });
+      return reactivated.id;
+    }
     return existing.id;
   }
 
   const created = await tx.quality.create({
-    data: { userId, name: normalized },
+    data: { userId, name: normalized, isActive: true },
     select: { id: true },
   });
 
