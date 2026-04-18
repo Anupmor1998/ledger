@@ -83,6 +83,12 @@ function buildCustomerStyleMessage(
 ) {
   const customerDisplay = order.customer?.firmName || order.customer?.name || "-";
   const manufacturerContact = order.manufacturer?.name || "-";
+  const manufacturerFirmName = order.manufacturer?.firmName?.trim() || "";
+  const customerContactName = order.customer?.name || customerDisplay;
+  const customerPhone = String(order.customer?.phone || "").trim();
+  const customerContactLine = customerPhone
+    ? `${customerContactName} (${customerPhone})`
+    : customerContactName;
   const quantityLabel = order.quantityUnit
     ? `${order.quantity} ${order.quantityUnit}`
     : `${order.quantity}`;
@@ -111,8 +117,13 @@ function buildCustomerStyleMessage(
     ...(deliveryRange ? [`- Delivery: ${deliveryRange}`] : []),
     `- Payment Dhara: ${paymentDueDays} days`,
     ...(mergedRemark ? [`- Remark: ${mergedRemark}`] : []),
+    ...(recipient === "MANUFACTURER"
+      ? ["", `डिलेवरी भेजो तब चालान की फोटु भेजना मेरे को आप ।`]
+      : []),
     "",
-    ...(includeManufacturerName ? [manufacturerContact] : []),
+    ...(includeManufacturerName
+      ? [manufacturerContact, ...(manufacturerFirmName ? [`(${manufacturerFirmName})`] : [])]
+      : [`*Contact No:* ${customerContactLine}`]),
     order.user.name || order.user.email,
   ].join("\n");
 }
