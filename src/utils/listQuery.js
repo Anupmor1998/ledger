@@ -44,6 +44,18 @@ function normalizeSearch(value) {
   return normalized.length > 0 ? normalized : null;
 }
 
+function tokenizeSearch(value) {
+  const normalized = normalizeSearch(value);
+  if (!normalized) {
+    return [];
+  }
+
+  return normalized
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+}
+
 function parseSort(query, allowedSortFields, defaultSortBy, defaultSortOrder = "desc") {
   const requestedSortBy = query.sortBy;
   const sortBy = allowedSortFields.includes(requestedSortBy) ? requestedSortBy : defaultSortBy;
@@ -69,6 +81,7 @@ function buildPaginatedResponse(items, total, page, limit) {
 module.exports = {
   buildPaginatedResponse,
   normalizeSearch,
+  tokenizeSearch,
   parsePagination,
   parseSort,
 };

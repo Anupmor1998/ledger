@@ -4,6 +4,7 @@ const asyncHandler = require("../utils/asyncHandler");
 const {
   buildPaginatedResponse,
   normalizeSearch,
+  tokenizeSearch,
   parsePagination,
   parseSort,
 } = require("../utils/listQuery");
@@ -223,6 +224,7 @@ const listCustomers = asyncHandler(async (req, res) => {
   const pagination = parsePagination(req.query);
   const { sortBy, sortOrder } = parseSort(req.query, CUSTOMER_SORT_FIELDS, "createdAt", "desc");
   const search = normalizeSearch(req.query.search);
+  const searchTokens = tokenizeSearch(search);
   const duplicatesOnly = String(req.query.duplicatesOnly || "").toLowerCase() === "true";
 
   const duplicateSourceRows = await prisma.customer.findMany({
@@ -246,17 +248,26 @@ const listCustomers = asyncHandler(async (req, res) => {
           },
         }
       : {}),
-    ...(search
+    ...(searchTokens.length
       ? {
-        OR: [
-          { firmName: { contains: search, mode: "insensitive" } },
-          { name: { contains: search, mode: "insensitive" } },
-          { gstNo: { contains: search, mode: "insensitive" } },
-          { email: { contains: search, mode: "insensitive" } },
-          { phone: { contains: search, mode: "insensitive" } },
-          { address: { contains: search, mode: "insensitive" } },
-          { commissionBase: { equals: search.toUpperCase() } },
-        ],
+        AND: searchTokens.map((token) => {
+          const normalizedCommissionBaseToken = String(token || "").toUpperCase();
+          const commissionBaseFilter = Object.values(COMMISSION_BASE).includes(normalizedCommissionBaseToken)
+            ? [{ commissionBase: { equals: normalizedCommissionBaseToken } }]
+            : [];
+
+          return {
+            OR: [
+              { firmName: { contains: token, mode: "insensitive" } },
+              { name: { contains: token, mode: "insensitive" } },
+              { gstNo: { contains: token, mode: "insensitive" } },
+              { email: { contains: token, mode: "insensitive" } },
+              { phone: { contains: token, mode: "insensitive" } },
+              { address: { contains: token, mode: "insensitive" } },
+              ...commissionBaseFilter,
+            ],
+          };
+        }),
       }
       : {}),
   };

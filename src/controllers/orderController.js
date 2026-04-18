@@ -11,6 +11,7 @@ const {
 const {
   buildPaginatedResponse,
   normalizeSearch,
+  tokenizeSearch,
   parsePagination,
   parseSort,
 } = require("../utils/listQuery");
@@ -534,6 +535,7 @@ const listOrders = asyncHandler(async (req, res) => {
   const pagination = parsePagination(req.query);
   const { sortBy, sortOrder } = parseSort(req.query, ORDER_SORT_FIELDS, "createdAt", "desc");
   const search = normalizeSearch(req.query.search);
+  const searchTokens = tokenizeSearch(search);
   const customerId = req.query.customerId ? String(req.query.customerId).trim() : null;
   const manufacturerId = req.query.manufacturerId ? String(req.query.manufacturerId).trim() : null;
   const qualityId = req.query.qualityId ? String(req.query.qualityId).trim() : null;
@@ -561,11 +563,22 @@ const listOrders = asyncHandler(async (req, res) => {
     if (hasStatusSearch) {
       searchConditions.push({ status: searchAsStatus });
     }
-    searchConditions.push({ customer: { name: { contains: search, mode: "insensitive" } } });
-    searchConditions.push({ manufacturer: { name: { contains: search, mode: "insensitive" } } });
-    searchConditions.push({ manufacturer: { firmName: { contains: search, mode: "insensitive" } } });
-    searchConditions.push({ quality: { name: { contains: search, mode: "insensitive" } } });
-    searchConditions.push({ remarks: { contains: search, mode: "insensitive" } });
+    if (searchTokens.length) {
+      searchConditions.push({
+        AND: searchTokens.map((token) => ({
+          OR: [
+            { customer: { firmName: { contains: token, mode: "insensitive" } } },
+            { customer: { name: { contains: token, mode: "insensitive" } } },
+            { manufacturer: { firmName: { contains: token, mode: "insensitive" } } },
+            { manufacturer: { name: { contains: token, mode: "insensitive" } } },
+            { quality: { name: { contains: token, mode: "insensitive" } } },
+            { remarks: { contains: token, mode: "insensitive" } },
+            { customerRemark: { contains: token, mode: "insensitive" } },
+            { manufacturerRemark: { contains: token, mode: "insensitive" } },
+          ],
+        })),
+      });
+    }
   }
 
   const where = {

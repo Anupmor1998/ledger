@@ -4,6 +4,7 @@ const asyncHandler = require("../utils/asyncHandler");
 const {
   buildPaginatedResponse,
   normalizeSearch,
+  tokenizeSearch,
   parsePagination,
   parseSort,
 } = require("../utils/listQuery");
@@ -124,6 +125,7 @@ const listManufacturers = asyncHandler(async (req, res) => {
     "desc"
   );
   const search = normalizeSearch(req.query.search);
+  const searchTokens = tokenizeSearch(search);
   const duplicatesOnly = String(req.query.duplicatesOnly || "").toLowerCase() === "true";
 
   const duplicateSourceRows = await prisma.manufacturer.findMany({
@@ -147,15 +149,17 @@ const listManufacturers = asyncHandler(async (req, res) => {
           },
         }
       : {}),
-    ...(search
+    ...(searchTokens.length
       ? {
-        OR: [
-          { firmName: { contains: search, mode: "insensitive" } },
-          { name: { contains: search, mode: "insensitive" } },
-          { email: { contains: search, mode: "insensitive" } },
-          { phone: { contains: search, mode: "insensitive" } },
-          { address: { contains: search, mode: "insensitive" } },
-        ],
+        AND: searchTokens.map((token) => ({
+          OR: [
+            { firmName: { contains: token, mode: "insensitive" } },
+            { name: { contains: token, mode: "insensitive" } },
+            { email: { contains: token, mode: "insensitive" } },
+            { phone: { contains: token, mode: "insensitive" } },
+            { address: { contains: token, mode: "insensitive" } },
+          ],
+        })),
       }
       : {}),
   };
