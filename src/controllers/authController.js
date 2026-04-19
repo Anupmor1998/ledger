@@ -3,7 +3,7 @@ const bcrypt = require("bcryptjs");
 const prisma = require("../config/prisma");
 const { FRONTEND_URL } = require("../config/env");
 const { createToken } = require("../utils/jwt");
-const { sendPasswordResetEmail, USING_PLACEHOLDER_KEY } = require("../utils/email");
+const { sendPasswordResetEmail, EMAIL_TRANSPORT_READY, IS_DEVELOPMENT } = require("../utils/email");
 const AppError = require("../utils/appError");
 const asyncHandler = require("../utils/asyncHandler");
 const { getFinancialYearStartYear } = require("../utils/financialYear");
@@ -120,12 +120,17 @@ const forgotPassword = asyncHandler(async (req, res) => {
       message: "if this email is registered, a reset email has been sent",
     });
   }
+  if (!IS_DEVELOPMENT) {
+    return res.json({
+      message: "if this email is registered, a reset request has been recorded",
+    });
+  }
 
   return res.json({
     ...genericMessage,
     resetToken: rawToken,
-    note: USING_PLACEHOLDER_KEY
-      ? "Replace RESEND_API_KEY value re_xxxxxxxxx with your real API key to enable email delivery."
+    note: !EMAIL_TRANSPORT_READY
+      ? "Set GMAIL_SMTP_EMAIL and GMAIL_SMTP_APP_PASSWORD in env to enable Gmail delivery."
       : !resetPasswordUrl
       ? "Set FRONTEND_URL in env to generate reset links. Returning token for development fallback."
       : "reset email could not be sent, returning token for development fallback",

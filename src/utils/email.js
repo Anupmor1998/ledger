@@ -1,27 +1,54 @@
-const { Resend } = require("resend");
-const { RESEND_API_KEY, RESEND_FROM_EMAIL } = require("../config/env");
+const nodemailer = require("nodemailer");
+const {
+  NODE_ENV,
+  GMAIL_SMTP_EMAIL,
+  GMAIL_SMTP_APP_PASSWORD,
+  PASSWORD_RESET_FROM_EMAIL,
+} = require("../config/env");
 
-const USING_PLACEHOLDER_KEY = RESEND_API_KEY === "re_xxxxxxxxx";
+const EMAIL_TRANSPORT_READY = Boolean(GMAIL_SMTP_EMAIL && GMAIL_SMTP_APP_PASSWORD);
+const IS_DEVELOPMENT = NODE_ENV !== "production";
 
-function createResendClient() {
-  if (USING_PLACEHOLDER_KEY) {
+let cachedTransporter = null;
+
+function getTransporter() {
+  if (!EMAIL_TRANSPORT_READY) {
     return null;
   }
 
-  return new Resend(RESEND_API_KEY);
+  if (!cachedTransporter) {
+    cachedTransporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: GMAIL_SMTP_EMAIL,
+        pass: GMAIL_SMTP_APP_PASSWORD,
+      },
+    });
+  }
+
+  return cachedTransporter;
 }
 
-async function sendPasswordResetEmail(to, token) {
-  const resend = createResendClient();
-  if (!resend || !to || !token) {
+async function sendPasswordResetEmail(to, resetUrl) {
+  const transporter = getTransporter();
+  if (!transporter || !to || !resetUrl) {
     return false;
   }
 
-  await resend.emails.send({
-    from: RESEND_FROM_EMAIL,
+  await transporter.sendMail({
+    from: PASSWORD_RESET_FROM_EMAIL || GMAIL_SMTP_EMAIL,
     to,
     subject: "Ledger Password Reset",
-    html: `<p>Click the link below to reset your password:</p><p><a href="${token}" target="_blank" rel="noopener noreferrer">${token}</a></p><p>This link expires in 15 minutes.</p>`,
+    html: `
+      <p>You requested a password reset for your Ledger account.</p>
+      <p>
+        <a href="${resetUrl}" target="_blank" rel="noopener noreferrer">
+          Reset your password
+        </a>
+      </p>
+      <p>This link expires in 15 minutes.</p>
+      <p>If you did not request this, you can ignore this email.</p>
+    `,
   });
 
   return true;
@@ -29,5 +56,6 @@ async function sendPasswordResetEmail(to, token) {
 
 module.exports = {
   sendPasswordResetEmail,
-  USING_PLACEHOLDER_KEY,
+  EMAIL_TRANSPORT_READY,
+  IS_DEVELOPMENT,
 };
