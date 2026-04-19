@@ -4,6 +4,7 @@ const prisma = require("../config/prisma");
 const { FRONTEND_URL } = require("../config/env");
 const { createToken } = require("../utils/jwt");
 const { sendPasswordResetEmail, EMAIL_TRANSPORT_READY, IS_DEVELOPMENT } = require("../utils/email");
+const logger = require("../utils/logger");
 const AppError = require("../utils/appError");
 const asyncHandler = require("../utils/asyncHandler");
 const { getFinancialYearStartYear } = require("../utils/financialYear");
@@ -17,6 +18,14 @@ function buildResetPasswordUrl(token) {
 
   const baseUrl = FRONTEND_URL.endsWith("/") ? FRONTEND_URL.slice(0, -1) : FRONTEND_URL;
   return `${baseUrl}/reset-password?token=${encodeURIComponent(token)}`;
+}
+
+function maskEmail(email) {
+  const [name = "", domain = ""] = String(email || "").split("@");
+  if (!name || !domain) {
+    return "unknown";
+  }
+  return `${name.slice(0, 2)}***@${domain}`;
 }
 
 const signup = asyncHandler(async (req, res) => {
@@ -97,6 +106,10 @@ const forgotPassword = asyncHandler(async (req, res) => {
   const user = await prisma.user.findUnique({ where: { email } });
 
   if (!user) {
+    logger.info("Password reset requested for unknown email", {
+      feature: "forgot-password",
+      email: maskEmail(email),
+    });
     return res.json(genericMessage);
   }
 
@@ -113,13 +126,29 @@ const forgotPassword = asyncHandler(async (req, res) => {
   });
 
   const resetPasswordUrl = buildResetPasswordUrl(rawToken);
-  const emailSent = await sendPasswordResetEmail(user.email, resetPasswordUrl);
+  const emailResult = await sendPasswordResetEmail(user.email, resetPasswordUrl);
 
-  if (emailSent) {
+  if (emailResult.sent) {
+    logger.info("Password reset email sent", {
+      feature: "forgot-password",
+      userId: user.id,
+      email: maskEmail(user.email),
+    });
     return res.json({
       message: "if this email is registered, a reset email has been sent",
     });
   }
+
+  logger.warn("Password reset email not sent", {
+    feature: "forgot-password",
+    userId: user.id,
+    email: maskEmail(user.email),
+    frontendUrlConfigured: Boolean(FRONTEND_URL),
+    smtpConfigured: EMAIL_TRANSPORT_READY,
+    reason: emailResult.reason,
+    environment: IS_DEVELOPMENT ? "development" : "production",
+  });
+
   if (!IS_DEVELOPMENT) {
     return res.json({
       message: "if this email is registered, a reset request has been recorded",
@@ -169,6 +198,11 @@ const resetPassword = asyncHandler(async (req, res) => {
       data: { usedAt: new Date() },
     }),
   ]);
+
+  logger.info("Password reset completed", {
+    feature: "reset-password",
+    userId: resetRecord.userId,
+  });
 
   return res.json({ message: "password reset successful" });
 });

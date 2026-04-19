@@ -1,4 +1,5 @@
 const AppError = require("../utils/appError");
+const logger = require("../utils/logger");
 
 const ACRONYM_LABELS = {
   gst: "GST",
@@ -98,23 +99,60 @@ function notFoundHandler(req, _res, next) {
   next(new AppError(`route not found: ${req.method} ${req.originalUrl}`, 404));
 }
 
-function errorHandler(error, _req, res, _next) {
+function errorHandler(error, req, res, _next) {
   if (error instanceof AppError) {
+    logger.warn("Handled application error", {
+      feature: "api",
+      method: req.method,
+      path: req.originalUrl,
+      statusCode: error.statusCode,
+      message: error.message,
+    });
     return res.status(error.statusCode).json({ message: error.message });
   }
 
   const prismaError = mapPrismaError(error);
   if (prismaError) {
+    logger.warn("Handled prisma error", {
+      feature: "api",
+      method: req.method,
+      path: req.originalUrl,
+      statusCode: prismaError.statusCode,
+      message: prismaError.message,
+      code: error.code,
+    });
     return res.status(prismaError.statusCode).json({ message: prismaError.message });
   }
 
   if (error.name === "JsonWebTokenError" || error.name === "TokenExpiredError") {
+    logger.warn("Handled auth token error", {
+      feature: "api",
+      method: req.method,
+      path: req.originalUrl,
+      statusCode: 401,
+      name: error.name,
+      message: error.message,
+    });
     return res.status(401).json({ message: "invalid or expired token" });
   }
 
   if (error instanceof SyntaxError && "body" in error) {
+    logger.warn("Handled JSON payload error", {
+      feature: "api",
+      method: req.method,
+      path: req.originalUrl,
+      statusCode: 400,
+      message: error.message,
+    });
     return res.status(400).json({ message: "invalid JSON payload" });
   }
+
+  logger.error("Unhandled server error", {
+    feature: "api",
+    method: req.method,
+    path: req.originalUrl,
+    error,
+  });
 
   return res.status(500).json({
     message: "internal server error",

@@ -11,6 +11,7 @@ const qualityRoutes = require("./routes/qualityRoutes");
 const reportRoutes = require("./routes/reportRoutes");
 const userRoutes = require("./routes/userRoutes");
 const { CORS_ORIGINS } = require("./config/env");
+const requestLogger = require("./middlewares/requestLogger");
 const { notFoundHandler, errorHandler } = require("./middlewares/errorHandler");
 
 const app = express();
@@ -30,6 +31,7 @@ app.use(
   })
 );
 app.use(express.json());
+app.use(requestLogger);
 
 app.use(`${apiPrefix}/health`, healthRoutes);
 app.use(`${apiPrefix}/auth`, authRoutes);
