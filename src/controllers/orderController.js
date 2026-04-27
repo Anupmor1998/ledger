@@ -67,6 +67,10 @@ function round2(value) {
   return Math.round(value * 100) / 100;
 }
 
+function roundCurrency(value) {
+  return Math.round(Number(value || 0));
+}
+
 function parseOrderDateOrThrow(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -176,7 +180,7 @@ function computeCommissionAmount({
   const commissionLotRate = Number(customerCommissionConfig?.commissionLotRate || 0);
 
   if (commissionBase === "LOT") {
-    return round2(quantityForCommission * commissionLotRate);
+    return roundCurrency(quantityForCommission * commissionLotRate);
   }
 
   const meter = toMeterFromQuantity({
@@ -186,7 +190,7 @@ function computeCommissionAmount({
   });
   const baseAmount = meter * rate;
   const gstAmount = baseAmount * GST_RATE;
-  return round2((baseAmount + gstAmount) * (commissionPercent / 100));
+  return roundCurrency((baseAmount + gstAmount) * (commissionPercent / 100));
 }
 
 function computeOrderAmounts(
@@ -224,7 +228,7 @@ function computeOrderAmounts(
     quantityUnit: normalizedUnit,
     lotMeters: lotMeters === null ? null : round2(lotMeters),
     meter: round2(meter),
-    commissionAmount: round2(commissionAmount),
+    commissionAmount: roundCurrency(commissionAmount),
   };
 }
 
@@ -988,6 +992,31 @@ const updateOrder = asyncHandler(async (req, res) => {
               lotMeters: effectiveLotMeters,
             })
           );
+        }
+
+        const effectiveQuantity = Number(
+          updateData.quantity !== undefined ? updateData.quantity : existing.quantity
+        );
+        const effectiveMeter = Number(
+          updateData.meter !== undefined ? updateData.meter : existing.meter
+        );
+
+        if (
+          updateData.status === ORDER_STATUS.COMPLETED &&
+          processedQuantity === undefined &&
+          processedQuantityAdd === undefined
+        ) {
+          updateData.processedQuantity = round2(effectiveQuantity);
+          updateData.processedMeter =
+            Number.isFinite(effectiveMeter) && effectiveMeter > 0
+              ? round2(effectiveMeter)
+              : round2(
+                  toMeterFromQuantity({
+                    quantity: effectiveQuantity,
+                    quantityUnit: effectiveQuantityUnit,
+                    lotMeters: effectiveLotMeters,
+                  })
+                );
         }
 
         const shouldFinalizeCommission =
