@@ -13,7 +13,9 @@
     "prisma:push": "prisma db push",
     "prisma:studio": "prisma studio",
     "db:sync-local": "node scripts/sync-prod-to-local.js",
-    "db:backup-local": "node scripts/backup-to-local.js"
+    "db:backup-local": "node scripts/backup-to-local.js",
+    "audit:commissions": "node scripts/audit-commissions.js",
+    "fix:commission-rounding": "node scripts/fix-commission-rounding.js"
   },
   "keywords": [],
   "author": "",
