@@ -73,6 +73,14 @@ function roundCurrency(value) {
   return Math.round(Number(value || 0));
 }
 
+function needsLotMetersBasis(quantityUnit, customerCommissionConfig) {
+  const normalizedUnit = String(quantityUnit || "").toUpperCase();
+  const commissionBase = String(customerCommissionConfig?.commissionBase || "PERCENT").toUpperCase();
+  return normalizedUnit === QUANTITY_UNITS.LOT ||
+    normalizedUnit === QUANTITY_UNITS.TAKKA ||
+    (normalizedUnit === QUANTITY_UNITS.METER && commissionBase === "LOT");
+}
+
 function computeProportionalCommissionAmount({
   processedQuantity,
   totalQuantity,
@@ -98,13 +106,9 @@ function parseLotMetersInput(value, quantityUnit) {
     return undefined;
   }
 
-  if (quantityUnit === QUANTITY_UNITS.METER) {
-    return null;
-  }
-
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new AppError("lotMeters must be greater than 0 for TAKKA/LOT orders", 400);
+    throw new AppError("lotMeters must be greater than 0 when provided", 400);
   }
 
   return parsed;
@@ -200,6 +204,19 @@ function toQuantityFromMeter({ meter, quantityUnit, lotMeters }) {
   return meter / (lotMeters / TAKKA_PER_LOT);
 }
 
+function toLotQuantity({ quantity, quantityUnit, lotMeters }) {
+  if (quantityUnit === QUANTITY_UNITS.LOT) {
+    return quantity;
+  }
+  if (quantityUnit === QUANTITY_UNITS.TAKKA) {
+    return quantity / TAKKA_PER_LOT;
+  }
+  if (!Number.isFinite(lotMeters) || lotMeters <= 0) {
+    throw new AppError("lot meter value is required for METER to LOT conversion", 400);
+  }
+  return quantity / lotMeters;
+}
+
 function computeCommissionAmount({
   quantityForCommission,
   rate,
@@ -219,7 +236,12 @@ function computeCommissionAmount({
   const commissionLotRate = Number(customerCommissionConfig?.commissionLotRate || 0);
 
   if (commissionBase === "LOT") {
-    return roundCurrency(quantityForCommission * commissionLotRate);
+    const lotQuantity = toLotQuantity({
+      quantity: quantityForCommission,
+      quantityUnit,
+      lotMeters,
+    });
+    return roundCurrency(lotQuantity * commissionLotRate);
   }
 
   const meter = toMeterFromQuantity({
@@ -244,12 +266,12 @@ function computeOrderAmounts(
     : QUANTITY_UNITS.TAKKA;
 
   const parsedExistingLotMeters = Number(existingLotMeters);
-  const lotMeters =
-    normalizedUnit === QUANTITY_UNITS.METER
-      ? null
-      : Number.isFinite(parsedExistingLotMeters) && parsedExistingLotMeters > 0
+  const shouldUseLotMeters = needsLotMetersBasis(normalizedUnit, customerCommissionConfig);
+  const lotMeters = shouldUseLotMeters
+    ? Number.isFinite(parsedExistingLotMeters) && parsedExistingLotMeters > 0
       ? parsedExistingLotMeters
-      : getRandomLotMeters();
+      : getRandomLotMeters()
+    : null;
 
   const meter =
     normalizedUnit === QUANTITY_UNITS.METER
@@ -1060,6 +1082,20 @@ const updateOrder = asyncHandler(async (req, res) => {
         const effectiveMeter = Number(
           updateData.meter !== undefined ? updateData.meter : existing.meter
         );
+
+        const nextProcessedQuantityValue = Number(
+          updateData.processedQuantity !== undefined
+            ? updateData.processedQuantity
+            : existing.processedQuantity
+        );
+        if (
+          Number.isFinite(effectiveQuantity) &&
+          effectiveQuantity >= 0 &&
+          Number.isFinite(nextProcessedQuantityValue) &&
+          nextProcessedQuantityValue > effectiveQuantity + 0.01
+        ) {
+          throw new AppError("processed quantity cannot be greater than order quantity", 400);
+        }
 
         if (
           updateData.status === ORDER_STATUS.COMPLETED &&

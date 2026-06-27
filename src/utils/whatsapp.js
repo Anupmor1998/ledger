@@ -102,6 +102,53 @@ function buildCustomerStyleMessage(
     ? `- Quality: ${order.quality.name}, डाइंग गारंटी`
     : `- Quality: ${order.quality.name}`;
 
+  if (recipient === "CUSTOMER") {
+    return [
+      `Order No: ${order.orderNo}`,
+      `Date: ${formatDate(order.orderDate)}`,
+      "",
+      `Party: ${customerDisplay}`,
+      `GST: ${order.customer.gstNo || "-"}`,
+      `Address: ${order.customer.address}`,
+      "",
+      "Order Details",
+      `- Quality: ${order.quality.name}`,
+      `- Qty: ${quantityLabel}`,
+      `- Rate: ${formatRate(order.rate)} + GST`,
+      ...(deliveryRange ? [`- Delivery: ${deliveryRange}`] : []),
+      `- Payment Dhara: ${paymentDueDays} days`,
+      ...(mergedRemark ? [`- Remark: ${mergedRemark}`] : []),
+      "",
+      `Manufactures-${manufacturerContact}`,
+      "",
+      `Broker - ${order.user.name || order.user.email}`,
+    ].join("\n");
+  }
+
+  if (recipient === "MANUFACTURER") {
+    return [
+      `Order No: ${order.orderNo}`,
+      `Order Date: ${formatDate(order.orderDate)}`,
+      "",
+      `Party: ${customerDisplay}`,
+      `GST: ${order.customer.gstNo || "-"}`,
+      `Address: ${order.customer.address}`,
+      "",
+      "Order Details",
+      qualityLine,
+      `- Qty: ${quantityLabel}`,
+      `- Rate: ${formatRate(order.rate)} + GST`,
+      ...(deliveryRange ? [`- Delivery: ${deliveryRange}`] : []),
+      `- Payment Dhara: ${paymentDueDays} days`,
+      ...(mergedRemark ? [`- Remark: ${mergedRemark}`] : []),
+      "",
+      "डिलेवरी भेजो तब चालान की फोटु भेजना मेरे को आप ।",
+      "",
+      `Contact No: ${customerContactLine}`,
+      `${order.user.name || order.user.email}`,
+    ].join("\n");
+  }
+
   return [
     `*Order No:* ${order.orderNo}`,
     `*Order Date:* ${formatDate(order.orderDate)}`,

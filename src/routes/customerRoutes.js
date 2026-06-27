@@ -6,6 +6,7 @@ const {
   listCustomerDuplicateGroups,
   listCustomers,
   getCustomerById,
+  previewCustomerCommissionRecalculation,
   updateCustomer,
   deleteCustomer,
   previewMergeCustomer,
@@ -23,6 +24,7 @@ router.post("/", createCustomer);
 router.get("/duplicate-groups", listCustomerDuplicateGroups);
 router.get("/", listCustomers);
 router.get("/:id", getCustomerById);
+router.get("/:id/commission-recalculation-preview", previewCustomerCommissionRecalculation);
 router.get("/:id/merge-preview", previewMergeCustomer);
 router.post("/:id/merge", mergeCustomer);
 router.put("/:id", updateCustomer);

@@ -1,6 +1,8 @@
 const prisma = require("../config/prisma");
 const AppError = require("../utils/appError");
 const asyncHandler = require("../utils/asyncHandler");
+const { getFinancialYearStartYear } = require("../utils/financialYear");
+const { syncPendingPaymentAmounts } = require("../utils/payments");
 const {
   buildPaginatedResponse,
   normalizeSearch,
@@ -15,6 +17,10 @@ const {
   normalizePhone,
   normalizeText,
 } = require("../utils/partyDuplicates");
+
+const TAKKA_PER_LOT = 12;
+const GST_RATE = 0.05;
+const DEFAULT_COMMISSION_PERCENT = 1;
 
 function validateCustomerPayload(body, { partial = false } = {}) {
   const requiredFields = ["firmName", "name", "address", "phone"];
@@ -78,6 +84,167 @@ function mergeCustomerFields(base, incoming) {
       base.commissionLotRate !== undefined && base.commissionLotRate !== null
         ? base.commissionLotRate
         : incoming.commissionLotRate ?? null,
+  };
+}
+
+function roundCurrency(value) {
+  return Math.round(Number(value || 0));
+}
+
+function toMeterFromQuantity({ quantity, quantityUnit, lotMeters }) {
+  if (quantityUnit === "METER") {
+    return quantity;
+  }
+  if (!Number.isFinite(lotMeters) || lotMeters <= 0) {
+    throw new AppError("lot meter value is required for TAKKA/LOT conversion", 400);
+  }
+  if (quantityUnit === "LOT") {
+    return quantity * lotMeters;
+  }
+  return quantity * (lotMeters / TAKKA_PER_LOT);
+}
+
+function computeCommissionAmountForOrder(order, commissionConfig) {
+  const quantity = Number(order?.quantity || 0);
+  const rate = Number(order?.rate || 0);
+  const quantityUnit = String(order?.quantityUnit || "TAKKA").toUpperCase();
+  const lotMeters = Number(order?.lotMeters || 0);
+
+  if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(rate) || rate <= 0) {
+    return 0;
+  }
+
+  const commissionBase = String(commissionConfig?.commissionBase || COMMISSION_BASE.PERCENT).toUpperCase();
+  const commissionPercent =
+    Number(commissionConfig?.commissionPercent) > 0
+      ? Number(commissionConfig.commissionPercent)
+      : DEFAULT_COMMISSION_PERCENT;
+  const commissionLotRate = Number(commissionConfig?.commissionLotRate || 0);
+
+  if (commissionBase === COMMISSION_BASE.LOT) {
+    return roundCurrency(quantity * commissionLotRate);
+  }
+
+  const meter = toMeterFromQuantity({ quantity, quantityUnit, lotMeters });
+  const baseAmount = meter * rate;
+  const gstAmount = baseAmount * GST_RATE;
+  return roundCurrency((baseAmount + gstAmount) * (commissionPercent / 100));
+}
+
+function hasCommissionChanged(existing, next) {
+  return (
+    String(existing?.commissionBase || "").toUpperCase() !== String(next?.commissionBase || "").toUpperCase() ||
+    Number(existing?.commissionPercent || 0) !== Number(next?.commissionPercent || 0) ||
+    Number(existing?.commissionLotRate || 0) !== Number(next?.commissionLotRate || 0)
+  );
+}
+
+async function getCustomerCommissionRecalculationScope(
+  tx,
+  userId,
+  customerId,
+  selectedFinancialYearStart
+) {
+  const orders = await tx.order.findMany({
+    where: {
+      userId,
+      customerId,
+      fyStartYear: selectedFinancialYearStart,
+      status: { not: "CANCELLED" },
+    },
+    select: {
+      id: true,
+      orderNo: true,
+      status: true,
+      quantity: true,
+      rate: true,
+      quantityUnit: true,
+      lotMeters: true,
+      pendingPayment: {
+        select: {
+          id: true,
+          paymentAllocations: {
+            select: { id: true },
+            take: 1,
+          },
+        },
+      },
+    },
+    orderBy: { orderNo: "asc" },
+  });
+
+  let updatableOrders = 0;
+  let updatablePendingPayments = 0;
+  let skippedOrdersWithPayments = 0;
+
+  for (const order of orders) {
+    if ((order.pendingPayment?.paymentAllocations || []).length > 0) {
+      skippedOrdersWithPayments += 1;
+      continue;
+    }
+    updatableOrders += 1;
+    if (order.pendingPayment?.id) {
+      updatablePendingPayments += 1;
+    }
+  }
+
+  return {
+    orders,
+    selectedFinancialYearStart,
+    totalOrdersInSelectedFinancialYear: orders.length,
+    updatableOrders,
+    updatablePendingPayments,
+    skippedOrdersWithPayments,
+  };
+}
+
+async function recalculateCustomerOrdersForSelectedFinancialYear(
+  tx,
+  userId,
+  customerId,
+  selectedFinancialYearStart,
+  commissionData
+) {
+  const scope = await getCustomerCommissionRecalculationScope(
+    tx,
+    userId,
+    customerId,
+    selectedFinancialYearStart
+  );
+
+  let updatedOrders = 0;
+  let updatedPendingPayments = 0;
+  let skippedOrdersWithPayments = 0;
+
+  for (const order of scope.orders) {
+    if ((order.pendingPayment?.paymentAllocations || []).length > 0) {
+      skippedOrdersWithPayments += 1;
+      continue;
+    }
+
+    const commissionAmount = computeCommissionAmountForOrder(order, commissionData);
+
+    await tx.order.update({
+      where: { id: order.id },
+      data: { commissionAmount },
+    });
+    updatedOrders += 1;
+
+    if (order.pendingPayment?.id) {
+      await tx.pendingPayment.update({
+        where: { id: order.pendingPayment.id },
+        data: { amountDue: commissionAmount },
+      });
+      await syncPendingPaymentAmounts(tx, order.pendingPayment.id);
+      updatedPendingPayments += 1;
+    }
+  }
+
+  return {
+    selectedFinancialYearStart,
+    updatedOrders,
+    updatedPendingPayments,
+    skippedOrdersWithPayments,
   };
 }
 
@@ -306,6 +473,45 @@ const getCustomerById = asyncHandler(async (req, res) => {
   return res.json(customer);
 });
 
+const previewCustomerCommissionRecalculation = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+  const { id } = req.params;
+
+  const existing = await prisma.customer.findFirst({
+    where: { id, userId },
+    select: { id: true },
+  });
+  if (!existing) {
+    throw new AppError("customer not found", 404);
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { selectedFinancialYearStart: true },
+  });
+  if (!user) {
+    throw new AppError("user not found", 404);
+  }
+
+  const selectedFinancialYearStart =
+    user.selectedFinancialYearStart ?? getFinancialYearStartYear();
+
+  const preview = await getCustomerCommissionRecalculationScope(
+    prisma,
+    userId,
+    id,
+    selectedFinancialYearStart
+  );
+
+  return res.json({
+    selectedFinancialYearStart: preview.selectedFinancialYearStart,
+    totalOrdersInSelectedFinancialYear: preview.totalOrdersInSelectedFinancialYear,
+    updatableOrders: preview.updatableOrders,
+    updatablePendingPayments: preview.updatablePendingPayments,
+    skippedOrdersWithPayments: preview.skippedOrdersWithPayments,
+  });
+});
+
 const updateCustomer = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
   const { id } = req.params;
@@ -335,13 +541,41 @@ const updateCustomer = asyncHandler(async (req, res) => {
     commissionLotRate: existing.commissionLotRate,
     ...req.body,
   });
+  const applyCommissionToSelectedFinancialYear = req.body?.applyCommissionToSelectedFinancialYear === true;
+  const commissionChanged = hasCommissionChanged(existing, commissionData);
 
-  const customer = await prisma.customer.update({
-    where: { id },
-    data: { firmName, name, gstNo, address, email, phone, ...commissionData },
+  const result = await prisma.$transaction(async (tx) => {
+    const customer = await tx.customer.update({
+      where: { id },
+      data: { firmName, name, gstNo, address, email, phone, ...commissionData },
+    });
+
+    let recalculation = null;
+    if (applyCommissionToSelectedFinancialYear && commissionChanged) {
+      const user = await tx.user.findUnique({
+        where: { id: userId },
+        select: { selectedFinancialYearStart: true },
+      });
+      if (!user) {
+        throw new AppError("user not found", 404);
+      }
+
+      const selectedFinancialYearStart =
+        user.selectedFinancialYearStart ?? getFinancialYearStartYear();
+
+      recalculation = await recalculateCustomerOrdersForSelectedFinancialYear(
+        tx,
+        userId,
+        id,
+        selectedFinancialYearStart,
+        commissionData
+      );
+    }
+
+    return { customer, recalculation };
   });
 
-  return res.json(customer);
+  return res.json(result);
 });
 
 const deleteCustomer = asyncHandler(async (req, res) => {
@@ -684,6 +918,7 @@ module.exports = {
   listCustomerDuplicateGroups,
   listCustomers,
   getCustomerById,
+  previewCustomerCommissionRecalculation,
   updateCustomer,
   deleteCustomer,
   previewMergeCustomer,
