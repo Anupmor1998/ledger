@@ -52,7 +52,9 @@ function resolvePaymentDueDays(order, { addExtraDays = 0 } = {}) {
 }
 
 function buildDeliveryRange(order) {
-  const from = order?.deliveryDateFrom ? formatDate(order.deliveryDateFrom) : "";
+  const from = order?.deliveryDateFrom
+    ? formatDate(order.deliveryDateFrom)
+    : "";
   const to = order?.deliveryDateTo ? formatDate(order.deliveryDateTo) : "";
 
   if (from && to) {
@@ -71,7 +73,9 @@ function joinRemarkParts(parts) {
 function buildMergedRemark(order, recipient) {
   const commonRemark = String(order?.remarks || "").trim();
   const recipientRemark = String(
-    recipient === "MANUFACTURER" ? order?.manufacturerRemark || "" : order?.customerRemark || ""
+    recipient === "MANUFACTURER"
+      ? order?.manufacturerRemark || ""
+      : order?.customerRemark || "",
   ).trim();
 
   return joinRemarkParts([commonRemark, recipientRemark]);
@@ -79,9 +83,14 @@ function buildMergedRemark(order, recipient) {
 
 function buildCustomerStyleMessage(
   order,
-  { addExtraPaymentDueDays = 0, includeManufacturerName = true, recipient = "CUSTOMER" } = {}
+  {
+    addExtraPaymentDueDays = 0,
+    includeManufacturerName = true,
+    recipient = "CUSTOMER",
+  } = {},
 ) {
-  const customerDisplay = order.customer?.firmName || order.customer?.name || "-";
+  const customerDisplay =
+    order.customer?.firmName || order.customer?.name || "-";
   const manufacturerContact = order.manufacturer?.name || "-";
   const manufacturerFirmName = order.manufacturer?.firmName?.trim() || "";
   const customerContactName = order.customer?.name || customerDisplay;
@@ -97,57 +106,11 @@ function buildCustomerStyleMessage(
   });
   const deliveryRange = buildDeliveryRange(order);
   const mergedRemark = buildMergedRemark(order, recipient);
-  const showDyeingGuarantees = recipient === "MANUFACTURER" && Boolean(order?.dyeingGuarantees);
+  const showDyeingGuarantees =
+    recipient === "MANUFACTURER" && Boolean(order?.dyeingGuarantees);
   const qualityLine = showDyeingGuarantees
     ? `- Quality: ${order.quality.name}, डाइंग गारंटी`
     : `- Quality: ${order.quality.name}`;
-
-  if (recipient === "CUSTOMER") {
-    return [
-      `Order No: ${order.orderNo}`,
-      `Date: ${formatDate(order.orderDate)}`,
-      "",
-      `Party: ${customerDisplay}`,
-      `GST: ${order.customer.gstNo || "-"}`,
-      `Address: ${order.customer.address}`,
-      "",
-      "Order Details",
-      `- Quality: ${order.quality.name}`,
-      `- Qty: ${quantityLabel}`,
-      `- Rate: ${formatRate(order.rate)} + GST`,
-      ...(deliveryRange ? [`- Delivery: ${deliveryRange}`] : []),
-      `- Payment Dhara: ${paymentDueDays} days`,
-      ...(mergedRemark ? [`- Remark: ${mergedRemark}`] : []),
-      "",
-      `Manufactures-${manufacturerContact}`,
-      "",
-      `Broker - ${order.user.name || order.user.email}`,
-    ].join("\n");
-  }
-
-  if (recipient === "MANUFACTURER") {
-    return [
-      `Order No: ${order.orderNo}`,
-      `Order Date: ${formatDate(order.orderDate)}`,
-      "",
-      `Party: ${customerDisplay}`,
-      `GST: ${order.customer.gstNo || "-"}`,
-      `Address: ${order.customer.address}`,
-      "",
-      "Order Details",
-      qualityLine,
-      `- Qty: ${quantityLabel}`,
-      `- Rate: ${formatRate(order.rate)} + GST`,
-      ...(deliveryRange ? [`- Delivery: ${deliveryRange}`] : []),
-      `- Payment Dhara: ${paymentDueDays} days`,
-      ...(mergedRemark ? [`- Remark: ${mergedRemark}`] : []),
-      "",
-      "डिलेवरी भेजो तब चालान की फोटु भेजना मेरे को आप ।",
-      "",
-      `Contact No: ${customerContactLine}`,
-      `${order.user.name || order.user.email}`,
-    ].join("\n");
-  }
 
   return [
     `*Order No:* ${order.orderNo}`,
@@ -169,7 +132,10 @@ function buildCustomerStyleMessage(
       : []),
     "",
     ...(includeManufacturerName
-      ? [manufacturerContact, ...(manufacturerFirmName ? [`(${manufacturerFirmName})`] : [])]
+      ? [
+          manufacturerContact,
+          ...(manufacturerFirmName ? [`(${manufacturerFirmName})`] : []),
+        ]
       : [`*Contact No:* ${customerContactLine}`]),
     order.user.name || order.user.email,
   ].join("\n");
@@ -179,7 +145,10 @@ function buildOrderWhatsAppLinks(order) {
   const messages = buildOrderWhatsAppMessages(order);
 
   return {
-    manufacturer: buildWhatsAppLink(messages.manufacturer, order.manufacturer?.phone),
+    manufacturer: buildWhatsAppLink(
+      messages.manufacturer,
+      order.manufacturer?.phone,
+    ),
     customer: buildWhatsAppLink(messages.customer, order.customer?.phone),
   };
 }
