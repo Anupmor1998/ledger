@@ -81,31 +81,29 @@ function buildMergedRemark(order, recipient) {
   return joinRemarkParts([commonRemark, recipientRemark]);
 }
 
-function buildCustomerStyleMessage(
-  order,
-  {
-    addExtraPaymentDueDays = 0,
-    includeManufacturerName = true,
-    recipient = "CUSTOMER",
-  } = {},
-) {
-  const customerDisplay =
-    order.customer?.firmName || order.customer?.name || "-";
-  const manufacturerContact = order.manufacturer?.name || "-";
-  const manufacturerFirmName = order.manufacturer?.firmName?.trim() || "";
-  const customerContactName = order.customer?.name || customerDisplay;
-  const customerPhone = String(order.customer?.phone || "").trim();
-  const customerContactLine = customerPhone
-    ? `${customerContactName} (${customerPhone})`
-    : customerContactName;
+function buildPartyDisplay(order) {
+  return order.customer?.firmName || order.customer?.name || "-";
+}
+
+function buildCustomerContactLine(order) {
+  const contactName = order.customer?.name || buildPartyDisplay(order);
+  const phone = String(order.customer?.phone || "").trim();
+  return phone ? `${contactName} (${phone})` : contactName;
+}
+
+function buildManufacturerDisplay(order) {
+  return order.manufacturer?.firmName || order.manufacturer?.name || "-";
+}
+
+function buildBrokerDisplay(order) {
+  return order.user?.name || order.user?.email || "-";
+}
+
+function buildOrderDetailLines(order, paymentDueDays, recipient, mergedRemark) {
   const quantityLabel = order.quantityUnit
     ? `${order.quantity} ${order.quantityUnit}`
     : `${order.quantity}`;
-  const paymentDueDays = resolvePaymentDueDays(order, {
-    addExtraDays: addExtraPaymentDueDays,
-  });
   const deliveryRange = buildDeliveryRange(order);
-  const mergedRemark = buildMergedRemark(order, recipient);
   const showDyeingGuarantees =
     recipient === "MANUFACTURER" && Boolean(order?.dyeingGuarantees);
   const qualityLine = showDyeingGuarantees
@@ -113,31 +111,61 @@ function buildCustomerStyleMessage(
     : `- Quality: ${order.quality.name}`;
 
   return [
-    `*Order No:* ${order.orderNo}`,
-    `*Order Date:* ${formatDate(order.orderDate)}`,
-    "",
-    `*Party:* ${customerDisplay}`,
-    `*GST:* ${order.customer.gstNo || "-"}`,
-    `*Address:* ${order.customer.address}`,
-    "",
-    "*Order Details*",
     qualityLine,
     `- Qty: ${quantityLabel}`,
     `- Rate: ${formatRate(order.rate)} + GST`,
     ...(deliveryRange ? [`- Delivery: ${deliveryRange}`] : []),
     `- Payment Dhara: ${paymentDueDays} days`,
     ...(mergedRemark ? [`- Remark: ${mergedRemark}`] : []),
-    ...(recipient === "MANUFACTURER"
-      ? ["", `डिलेवरी भेजो तब चालान की फोटु भेजना मेरे को आप ।`]
-      : []),
+  ];
+}
+
+function buildManufacturerMessage(order) {
+  const paymentDueDays = resolvePaymentDueDays(order, { addExtraDays: 5 });
+  const mergedRemark = buildMergedRemark(order, "MANUFACTURER");
+
+  return [
+    `Order No: ${order.orderNo}`,
+    `Date: ${formatDate(order.orderDate)}`,
     "",
-    ...(includeManufacturerName
-      ? [
-          manufacturerContact,
-          ...(manufacturerFirmName ? [`(${manufacturerFirmName})`] : []),
-        ]
-      : [`*Contact No:* ${customerContactLine}`]),
-    order.user.name || order.user.email,
+    `Party: ${buildPartyDisplay(order)}`,
+    `Contact No: ${buildCustomerContactLine(order)}`,
+    `GST: ${order.customer?.gstNo || "-"}`,
+    `Address: ${order.customer?.address || "-"}`,
+    "",
+    "Order Details",
+    ...buildOrderDetailLines(
+      order,
+      paymentDueDays,
+      "MANUFACTURER",
+      mergedRemark,
+    ),
+    "",
+    "डिलेवरी भेजो तब चालान की फोटु भेजना ।",
+    "चालान में Order No. लिख कर भेजना ।",
+    "",
+    `Broker - ${buildBrokerDisplay(order)}`,
+  ].join("\n");
+}
+
+function buildCustomerMessage(order) {
+  const paymentDueDays = resolvePaymentDueDays(order);
+  const mergedRemark = buildMergedRemark(order, "CUSTOMER");
+
+  return [
+    `*Order No:* ${order.orderNo}`,
+    `*Date:* ${formatDate(order.orderDate)}`,
+    "",
+    `*Party:* ${buildPartyDisplay(order)}`,
+    `*GST:* ${order.customer?.gstNo || "-"}`,
+    `*Address:* ${order.customer?.address || "-"}`,
+    "",
+    "*Order Details*",
+    ...buildOrderDetailLines(order, paymentDueDays, "CUSTOMER", mergedRemark),
+    "",
+    `Manufactures-${buildManufacturerDisplay(order)}`,
+    "",
+    `Broker - ${buildBrokerDisplay(order)}`,
   ].join("\n");
 }
 
@@ -154,18 +182,9 @@ function buildOrderWhatsAppLinks(order) {
 }
 
 function buildOrderWhatsAppMessages(order) {
-  const customerMessage = buildCustomerStyleMessage(order, {
-    recipient: "CUSTOMER",
-  });
-  const manufacturerMessage = buildCustomerStyleMessage(order, {
-    addExtraPaymentDueDays: 5,
-    includeManufacturerName: false,
-    recipient: "MANUFACTURER",
-  });
-
   return {
-    manufacturer: manufacturerMessage,
-    customer: customerMessage,
+    manufacturer: buildManufacturerMessage(order),
+    customer: buildCustomerMessage(order),
   };
 }
 
