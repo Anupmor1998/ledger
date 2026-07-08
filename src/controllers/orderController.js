@@ -1083,20 +1083,6 @@ const updateOrder = asyncHandler(async (req, res) => {
           updateData.meter !== undefined ? updateData.meter : existing.meter
         );
 
-        const nextProcessedQuantityValue = Number(
-          updateData.processedQuantity !== undefined
-            ? updateData.processedQuantity
-            : existing.processedQuantity
-        );
-        if (
-          Number.isFinite(effectiveQuantity) &&
-          effectiveQuantity >= 0 &&
-          Number.isFinite(nextProcessedQuantityValue) &&
-          nextProcessedQuantityValue > effectiveQuantity + 0.01
-        ) {
-          throw new AppError("processed quantity cannot be greater than order quantity", 400);
-        }
-
         if (
           updateData.status === ORDER_STATUS.COMPLETED &&
           processedQuantity === undefined &&
