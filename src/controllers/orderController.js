@@ -612,6 +612,70 @@ function buildOrderSort(sortBy, sortOrder) {
   return { [sortBy]: sortOrder };
 }
 
+const ORDER_NUMERIC_SEARCH_FIELDS = [
+  { field: "orderNo", type: "int" },
+  { field: "quantity", type: "int" },
+  { field: "processedQuantity", type: "decimal" },
+  { field: "processedMeter", type: "decimal" },
+  { field: "rate", type: "decimal" },
+  { field: "lotMeters", type: "decimal" },
+  { field: "meter", type: "decimal" },
+  { field: "commissionAmount", type: "decimal" },
+  { field: "paymentDueOn", type: "int" },
+];
+
+function parseNumericSearchToken(token) {
+  const normalized = String(token || "").trim();
+  if (!normalized) {
+    return null;
+  }
+
+  if (!/^\d+(?:\.\d+)?$/.test(normalized)) {
+    return null;
+  }
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function buildOrderSearchClause(token) {
+  const numericValue = parseNumericSearchToken(token);
+  const normalizedToken = String(token || "").trim();
+  const upperToken = normalizedToken.toUpperCase();
+  const orConditions = [];
+
+  if (numericValue !== null) {
+    orConditions.push(
+      ...ORDER_NUMERIC_SEARCH_FIELDS.map((entry) => ({
+        [entry.field]: numericValue,
+      }))
+    );
+  }
+
+  if (normalizedToken && numericValue === null) {
+    orConditions.push(
+      { customer: { firmName: { contains: normalizedToken, mode: "insensitive" } } },
+      { customer: { name: { contains: normalizedToken, mode: "insensitive" } } },
+      { manufacturer: { firmName: { contains: normalizedToken, mode: "insensitive" } } },
+      { manufacturer: { name: { contains: normalizedToken, mode: "insensitive" } } },
+      { quality: { name: { contains: normalizedToken, mode: "insensitive" } } },
+      { remarks: { contains: normalizedToken, mode: "insensitive" } },
+      { customerRemark: { contains: normalizedToken, mode: "insensitive" } },
+      { manufacturerRemark: { contains: normalizedToken, mode: "insensitive" } }
+    );
+  }
+
+  if (Object.values(ORDER_STATUS).includes(upperToken)) {
+    orConditions.push({ status: upperToken });
+  }
+
+  if (!orConditions.length) {
+    return null;
+  }
+
+  return { OR: orConditions };
+}
+
 const listOrders = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
   const selectedFinancialYearStart = await getSelectedFinancialYearStartForUser(userId);
@@ -634,35 +698,7 @@ const listOrders = asyncHandler(async (req, res) => {
   if (statusFilter && !Object.values(ORDER_STATUS).includes(statusFilter)) {
     throw new AppError("status must be one of: PENDING, COMPLETED, CANCELLED", 400);
   }
-  const orderNoSearch = Number.parseInt(search || "", 10);
-  const hasOrderNoSearch = Number.isFinite(orderNoSearch);
-  const searchAsStatus = search ? String(search).toUpperCase() : null;
-  const hasStatusSearch = searchAsStatus && Object.values(ORDER_STATUS).includes(searchAsStatus);
-  const searchConditions = [];
-  if (search) {
-    if (hasOrderNoSearch) {
-      searchConditions.push({ orderNo: orderNoSearch });
-    }
-    if (hasStatusSearch) {
-      searchConditions.push({ status: searchAsStatus });
-    }
-    if (searchTokens.length) {
-      searchConditions.push({
-        AND: searchTokens.map((token) => ({
-          OR: [
-            { customer: { firmName: { contains: token, mode: "insensitive" } } },
-            { customer: { name: { contains: token, mode: "insensitive" } } },
-            { manufacturer: { firmName: { contains: token, mode: "insensitive" } } },
-            { manufacturer: { name: { contains: token, mode: "insensitive" } } },
-            { quality: { name: { contains: token, mode: "insensitive" } } },
-            { remarks: { contains: token, mode: "insensitive" } },
-            { customerRemark: { contains: token, mode: "insensitive" } },
-            { manufacturerRemark: { contains: token, mode: "insensitive" } },
-          ],
-        })),
-      });
-    }
-  }
+  const searchConditions = searchTokens.map((token) => buildOrderSearchClause(token)).filter(Boolean);
 
   const where = {
     userId,
@@ -685,8 +721,8 @@ const listOrders = asyncHandler(async (req, res) => {
       : {}),
     ...(searchConditions.length
       ? {
-        OR: searchConditions,
-      }
+          AND: searchConditions,
+        }
       : {}),
   };
 
