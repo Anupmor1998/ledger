@@ -16,6 +16,32 @@ function validateQualityPayload(body, { partial = false } = {}) {
   return null;
 }
 
+function buildQualitySearchWhere(searchField, search) {
+  const normalizedSearch = normalizeSearch(search);
+  if (!normalizedSearch) {
+    return null;
+  }
+
+  const selectedField = String(searchField || "").trim();
+
+  switch (selectedField) {
+    case "name":
+      return { name: { contains: normalizedSearch, mode: "insensitive" } };
+    case "status": {
+      const normalized = normalizedSearch.toLowerCase();
+      if (normalized === "active" || normalized === "true" || normalized === "1") {
+        return { isActive: true };
+      }
+      if (normalized === "archived" || normalized === "inactive" || normalized === "false" || normalized === "0") {
+        return { isActive: false };
+      }
+      return { id: "__no_quality_search_match__" };
+    }
+    default:
+      return { name: { contains: normalizedSearch, mode: "insensitive" } };
+  }
+}
+
 const createQuality = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
   const validationError = validateQualityPayload(req.body);
@@ -53,16 +79,13 @@ const listQualities = asyncHandler(async (req, res) => {
   const pagination = parsePagination(req.query);
   const { sortBy, sortOrder } = parseSort(req.query, QUALITY_SORT_FIELDS, "name", "asc");
   const search = normalizeSearch(req.query.search);
+  const searchWhere = buildQualitySearchWhere(req.query.searchField, search);
   const includeArchived = String(req.query.includeArchived || "").toLowerCase() === "true";
 
   const where = {
     userId,
     ...(!includeArchived ? { isActive: true } : {}),
-    ...(search
-      ? {
-        name: { contains: search, mode: "insensitive" },
-      }
-      : {}),
+    ...(searchWhere || {}),
   };
 
   const qualities = await prisma.quality.findMany({

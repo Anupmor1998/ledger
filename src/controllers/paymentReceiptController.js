@@ -49,12 +49,146 @@ function normalizeReceipt(receipt) {
   };
 }
 
+function buildPaymentReceiptSearchWhere(searchField, search) {
+  const normalizedSearch = normalizeSearch(search);
+  if (!normalizedSearch) {
+    return null;
+  }
+
+  const selectedField = String(searchField || "").trim();
+  const numericValue = Number(normalizedSearch);
+
+  switch (selectedField) {
+    case "accountName":
+      return { accountName: { contains: normalizedSearch, mode: "insensitive" } };
+    case "serialNo":
+      return Number.isFinite(numericValue)
+        ? { serialNo: numericValue }
+        : { id: "__no_payment_receipt_search_match__" };
+    case "customerName":
+      return {
+        paymentAllocations: {
+          some: {
+            pendingPayment: {
+              order: {
+                customer: {
+                  name: { contains: normalizedSearch, mode: "insensitive" },
+                },
+              },
+            },
+          },
+        },
+      };
+    case "customerFirmName":
+      return {
+        paymentAllocations: {
+          some: {
+            pendingPayment: {
+              order: {
+                customer: {
+                  firmName: { contains: normalizedSearch, mode: "insensitive" },
+                },
+              },
+            },
+          },
+        },
+      };
+    case "orderNo":
+      return Number.isFinite(numericValue)
+        ? {
+            paymentAllocations: {
+              some: {
+                pendingPayment: {
+                  order: { orderNo: numericValue },
+                },
+              },
+            },
+          }
+        : { id: "__no_payment_receipt_search_match__" };
+    case "paymentMode": {
+      const mode = normalizedSearch.toUpperCase();
+      return Object.values(PAYMENT_MODES).includes(mode)
+        ? { paymentMode: mode }
+        : { id: "__no_payment_receipt_search_match__" };
+    }
+    case "amount":
+      return Number.isFinite(numericValue)
+        ? { amount: numericValue }
+        : { id: "__no_payment_receipt_search_match__" };
+    case "date":
+    case "paymentReceivedDate": {
+      const date = new Date(normalizedSearch);
+      if (Number.isNaN(date.getTime())) {
+        return { id: "__no_payment_receipt_search_match__" };
+      }
+      const start = new Date(date);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(date);
+      end.setHours(23, 59, 59, 999);
+      return {
+        [selectedField]: {
+          gte: start,
+          lte: end,
+        },
+      };
+    }
+    default: {
+      const searchAsNumber = Number.parseInt(normalizedSearch, 10);
+      const hasNumericSearch = Number.isFinite(searchAsNumber);
+      const normalizedPaymentModeSearch = normalizedSearch.toUpperCase();
+      const hasPaymentModeSearch = Object.values(PAYMENT_MODES).includes(normalizedPaymentModeSearch);
+      return {
+        OR: [
+          { accountName: { contains: normalizedSearch, mode: "insensitive" } },
+          hasNumericSearch ? { serialNo: searchAsNumber } : undefined,
+          {
+            paymentAllocations: {
+              some: {
+                pendingPayment: {
+                  order: {
+                    customer: {
+                      OR: [
+                        { name: { contains: normalizedSearch, mode: "insensitive" } },
+                        { firmName: { contains: normalizedSearch, mode: "insensitive" } },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          },
+          hasNumericSearch
+            ? {
+                paymentAllocations: {
+                  some: {
+                    pendingPayment: {
+                      OR: [
+                        { serialNo: searchAsNumber },
+                        { order: { orderNo: searchAsNumber } },
+                      ],
+                    },
+                  },
+                },
+              }
+            : undefined,
+          hasPaymentModeSearch ? { paymentMode: { equals: normalizedPaymentModeSearch } } : undefined,
+        ].filter(Boolean),
+      };
+    }
+  }
+}
+
 const listPaymentReceipts = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
   const selectedFinancialYearStart = await getSelectedFinancialYearStartForUser(userId);
   const pagination = parsePagination(req.query);
   const { sortBy, sortOrder } = parseSort(req.query, RECEIPT_SORT_FIELDS, "date", "desc");
   const search = normalizeSearch(req.query.search);
+  const searchField = String(req.query.searchField || "").trim();
+  const normalizedSearch = normalizeSearch(search);
+  const useInMemoryNumericSubstringSearch = Boolean(normalizedSearch) &&
+    ["serialNo", "orderNo", "amount"].includes(searchField);
+  const searchWhere = buildPaymentReceiptSearchWhere(req.query.searchField, search);
   const paymentModeFilter = req.query.paymentMode ? String(req.query.paymentMode).toUpperCase() : null;
   if (paymentModeFilter && !Object.values(PAYMENT_MODES).includes(paymentModeFilter)) {
     throw new AppError("paymentMode must be one of: CASH, CHEQUE, ONLINE, UPI", 400);
@@ -75,11 +209,6 @@ const listPaymentReceipts = asyncHandler(async (req, res) => {
   if (receivedTo && Number.isNaN(receivedTo.getTime())) {
     throw new AppError("invalid receivedTo date", 400);
   }
-  const normalizedPaymentModeSearch = search ? String(search).toUpperCase() : null;
-  const hasPaymentModeSearch =
-    normalizedPaymentModeSearch &&
-    Object.values(PAYMENT_MODES).includes(normalizedPaymentModeSearch);
-
   const where = {
     userId,
     fyStartYear: selectedFinancialYearStart,
@@ -100,54 +229,12 @@ const listPaymentReceipts = asyncHandler(async (req, res) => {
           },
         }
       : {}),
-    ...(search
-      ? {
-          OR: [
-            { accountName: { contains: search, mode: "insensitive" } },
-            Number.isFinite(Number.parseInt(search, 10))
-              ? { serialNo: Number.parseInt(search, 10) }
-              : undefined,
-            {
-              paymentAllocations: {
-                some: {
-                  pendingPayment: {
-                    order: {
-                      customer: {
-                        OR: [
-                          { name: { contains: search, mode: "insensitive" } },
-                          { firmName: { contains: search, mode: "insensitive" } },
-                        ],
-                      },
-                    },
-                  },
-                },
-              },
-            },
-            Number.isFinite(Number.parseInt(search, 10))
-              ? {
-                  paymentAllocations: {
-                    some: {
-                      pendingPayment: {
-                        OR: [
-                          { serialNo: Number.parseInt(search, 10) },
-                          { order: { orderNo: Number.parseInt(search, 10) } },
-                        ],
-                      },
-                    },
-                  },
-                }
-              : undefined,
-            hasPaymentModeSearch ? { paymentMode: { equals: normalizedPaymentModeSearch } } : undefined,
-          ].filter(Boolean),
-        }
-      : {}),
+    ...(!useInMemoryNumericSubstringSearch ? searchWhere || {} : {}),
   };
 
-  const receipts = await prisma.paymentReceipt.findMany({
+  const queryOptions = {
     where,
     orderBy: { [sortBy]: sortOrder },
-    skip: pagination.skip,
-    take: pagination.take,
     include: {
       paymentAllocations: {
         include: {
@@ -169,12 +256,54 @@ const listPaymentReceipts = asyncHandler(async (req, res) => {
         },
       },
     },
-  });
+  };
 
-  const normalized = receipts.map(normalizeReceipt);
+  const receipts = useInMemoryNumericSubstringSearch
+    ? await prisma.paymentReceipt.findMany(queryOptions)
+    : await prisma.paymentReceipt.findMany({
+        ...queryOptions,
+        skip: pagination.skip,
+        take: pagination.take,
+      });
+
+  const filteredReceipts = useInMemoryNumericSubstringSearch
+    ? receipts.filter((receipt) => {
+        let fieldValue = null;
+        switch (searchField) {
+          case "serialNo":
+            fieldValue = receipt.serialNo;
+            break;
+          case "orderNo":
+            fieldValue = receipt.paymentAllocations?.some((allocation) =>
+              String(allocation?.pendingPayment?.order?.orderNo || "").includes(normalizedSearch)
+            );
+            break;
+          case "amount":
+            fieldValue = receipt.amount;
+            break;
+          default:
+            fieldValue = null;
+        }
+        if (searchField === "orderNo") {
+          return Boolean(fieldValue);
+        }
+        return fieldValue !== null && fieldValue !== undefined
+          ? String(fieldValue).includes(normalizedSearch)
+          : false;
+      })
+    : receipts;
+
+  const normalized = filteredReceipts.map(normalizeReceipt);
 
   if (!pagination.enabled) {
     return res.json(normalized);
+  }
+
+  if (useInMemoryNumericSubstringSearch) {
+    const paginated = normalized.slice(pagination.skip, pagination.skip + pagination.take);
+    return res.json(
+      buildPaginatedResponse(paginated, normalized.length, pagination.page, pagination.limit)
+    );
   }
 
   const total = await prisma.paymentReceipt.count({ where });

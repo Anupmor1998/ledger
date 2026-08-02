@@ -57,6 +57,82 @@ function getCustomerDisplayName(customer) {
   return String(customer?.firmName || customer?.name || "").trim();
 }
 
+function buildPendingPaymentSearchWhere(searchField, search) {
+  const normalizedSearch = normalizeSearch(search);
+  if (!normalizedSearch) {
+    return null;
+  }
+
+  const selectedField = String(searchField || "").trim();
+  const numericValue = Number(normalizedSearch);
+
+  switch (selectedField) {
+    case "accountName":
+      return { accountName: { contains: normalizedSearch, mode: "insensitive" } };
+    case "serialNo":
+      return Number.isFinite(numericValue)
+        ? { serialNo: numericValue }
+        : { id: "__no_pending_payment_search_match__" };
+    case "customerName":
+      return { order: { customer: { name: { contains: normalizedSearch, mode: "insensitive" } } } };
+    case "customerFirmName":
+      return {
+        order: { customer: { firmName: { contains: normalizedSearch, mode: "insensitive" } } },
+      };
+    case "orderNo":
+      return Number.isFinite(numericValue)
+        ? { order: { orderNo: numericValue } }
+        : { id: "__no_pending_payment_search_match__" };
+    case "amountDue":
+    case "amountReceived":
+    case "discountAmount":
+    case "balanceAmount":
+      return Number.isFinite(numericValue)
+        ? { [selectedField]: numericValue }
+        : { id: "__no_pending_payment_search_match__" };
+    case "status": {
+      const status = normalizedSearch.toUpperCase();
+      return [
+        PENDING_PAYMENT_STATUS.PENDING,
+        PENDING_PAYMENT_STATUS.PARTIAL,
+        PENDING_PAYMENT_STATUS.PAID,
+        PENDING_PAYMENT_STATUS.SETTLED,
+      ].includes(status)
+        ? { status }
+        : { id: "__no_pending_payment_search_match__" };
+    }
+    case "dueDate": {
+      const date = new Date(normalizedSearch);
+      if (Number.isNaN(date.getTime())) {
+        return { id: "__no_pending_payment_search_match__" };
+      }
+      const start = new Date(date);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(date);
+      end.setHours(23, 59, 59, 999);
+      return {
+        dueDate: {
+          gte: start,
+          lte: end,
+        },
+      };
+    }
+    default: {
+      const searchAsNumber = Number.parseInt(normalizedSearch, 10);
+      const hasNumericSearch = Number.isFinite(searchAsNumber);
+      return {
+        OR: [
+          { accountName: { contains: normalizedSearch, mode: "insensitive" } },
+          hasNumericSearch ? { serialNo: searchAsNumber } : undefined,
+          { order: { customer: { name: { contains: normalizedSearch, mode: "insensitive" } } } },
+          { order: { customer: { firmName: { contains: normalizedSearch, mode: "insensitive" } } } },
+          hasNumericSearch ? { order: { orderNo: searchAsNumber } } : undefined,
+        ].filter(Boolean),
+      };
+    }
+  }
+}
+
 const listPendingPayments = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
   const selectedFinancialYearStart = await getSelectedFinancialYearStartForUser(userId);
@@ -68,8 +144,11 @@ const listPendingPayments = asyncHandler(async (req, res) => {
     "desc"
   );
   const search = normalizeSearch(req.query.search);
-  const searchAsNumber = Number.parseInt(search || "", 10);
-  const hasNumericSearch = Number.isFinite(searchAsNumber);
+  const searchField = String(req.query.searchField || "").trim();
+  const normalizedSearch = normalizeSearch(search);
+  const useInMemoryNumericSubstringSearch = Boolean(normalizedSearch) &&
+    ["serialNo", "orderNo", "amountDue", "amountReceived", "discountAmount", "balanceAmount"].includes(searchField);
+  const searchWhere = buildPendingPaymentSearchWhere(req.query.searchField, search);
   const statusFilter = req.query.status ? String(req.query.status).toUpperCase() : null;
   if (
     statusFilter &&
@@ -107,24 +186,12 @@ const listPendingPayments = asyncHandler(async (req, res) => {
           },
         }
       : {}),
-    ...(search
-      ? {
-          OR: [
-            { accountName: { contains: search, mode: "insensitive" } },
-            hasNumericSearch ? { serialNo: searchAsNumber } : undefined,
-            { order: { customer: { name: { contains: search, mode: "insensitive" } } } },
-            { order: { customer: { firmName: { contains: search, mode: "insensitive" } } } },
-            hasNumericSearch ? { order: { orderNo: searchAsNumber } } : undefined,
-          ].filter(Boolean),
-        }
-      : {}),
+    ...(!useInMemoryNumericSubstringSearch ? searchWhere || {} : {}),
   };
 
-  const rows = await prisma.pendingPayment.findMany({
+  const queryOptions = {
     where,
     orderBy: { [sortBy]: sortOrder },
-    skip: pagination.skip,
-    take: pagination.take,
     include: {
       order: {
         select: {
@@ -135,9 +202,48 @@ const listPendingPayments = asyncHandler(async (req, res) => {
         },
       },
     },
-  });
+  };
 
-  const normalized = rows.map((row) =>
+  const rows = useInMemoryNumericSubstringSearch
+    ? await prisma.pendingPayment.findMany(queryOptions)
+    : await prisma.pendingPayment.findMany({
+        ...queryOptions,
+        skip: pagination.skip,
+        take: pagination.take,
+      });
+
+  const filteredRows = useInMemoryNumericSubstringSearch
+    ? rows.filter((row) => {
+        let fieldValue = null;
+        switch (searchField) {
+          case "serialNo":
+            fieldValue = row.serialNo;
+            break;
+          case "orderNo":
+            fieldValue = row.order?.orderNo;
+            break;
+          case "amountDue":
+            fieldValue = row.amountDue;
+            break;
+          case "amountReceived":
+            fieldValue = row.amountReceived;
+            break;
+          case "discountAmount":
+            fieldValue = row.discountAmount;
+            break;
+          case "balanceAmount":
+            fieldValue = row.balanceAmount;
+            break;
+          default:
+            fieldValue = null;
+        }
+        return fieldValue !== null && fieldValue !== undefined
+          ? String(fieldValue).includes(normalizedSearch)
+          : false;
+      })
+    : rows;
+
+  const normalized = filteredRows.map((row) =>
     normalizePendingPayment({
       ...row,
       customerId: row.order?.customer?.id || null,
@@ -146,6 +252,13 @@ const listPendingPayments = asyncHandler(async (req, res) => {
   );
   if (!pagination.enabled) {
     return res.json(normalized);
+  }
+
+  if (useInMemoryNumericSubstringSearch) {
+    const paginated = normalized.slice(pagination.skip, pagination.skip + pagination.take);
+    return res.json(
+      buildPaginatedResponse(paginated, normalized.length, pagination.page, pagination.limit)
+    );
   }
 
   const total = await prisma.pendingPayment.count({ where });

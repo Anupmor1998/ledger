@@ -65,6 +65,43 @@ function mergeManufacturerFields(base, incoming) {
   };
 }
 
+function buildManufacturerSearchWhere(searchField, search) {
+  const normalizedSearch = normalizeSearch(search);
+  if (!normalizedSearch) {
+    return null;
+  }
+
+  const selectedField = String(searchField || "").trim();
+
+  switch (selectedField) {
+    case "firmName":
+    case "name":
+    case "email":
+    case "phone":
+    case "address":
+      return {
+        [selectedField]: {
+          contains: normalizedSearch,
+          mode: "insensitive",
+        },
+      };
+    default: {
+      const searchTokens = tokenizeSearch(normalizedSearch);
+      const searchConditions = searchTokens.map((token) => ({
+        OR: [
+          { firmName: { contains: token, mode: "insensitive" } },
+          { name: { contains: token, mode: "insensitive" } },
+          { email: { contains: token, mode: "insensitive" } },
+          { phone: { contains: token, mode: "insensitive" } },
+          { address: { contains: token, mode: "insensitive" } },
+        ],
+      }));
+
+      return searchConditions.length ? { AND: searchConditions } : null;
+    }
+  }
+}
+
 async function mergeManufacturersIntoTarget(tx, userId, targetManufacturer, sourceManufacturers) {
   if (!sourceManufacturers.length) {
     return {
@@ -125,7 +162,7 @@ const listManufacturers = asyncHandler(async (req, res) => {
     "desc"
   );
   const search = normalizeSearch(req.query.search);
-  const searchTokens = tokenizeSearch(search);
+  const searchWhere = buildManufacturerSearchWhere(req.query.searchField, search);
   const duplicatesOnly = String(req.query.duplicatesOnly || "").toLowerCase() === "true";
 
   const duplicateSourceRows = await prisma.manufacturer.findMany({
@@ -149,19 +186,7 @@ const listManufacturers = asyncHandler(async (req, res) => {
           },
         }
       : {}),
-    ...(searchTokens.length
-      ? {
-        AND: searchTokens.map((token) => ({
-          OR: [
-            { firmName: { contains: token, mode: "insensitive" } },
-            { name: { contains: token, mode: "insensitive" } },
-            { email: { contains: token, mode: "insensitive" } },
-            { phone: { contains: token, mode: "insensitive" } },
-            { address: { contains: token, mode: "insensitive" } },
-          ],
-        })),
-      }
-      : {}),
+    ...(searchWhere || {}),
   };
 
   const manufacturers = await prisma.manufacturer.findMany({

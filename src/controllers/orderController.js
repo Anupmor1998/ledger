@@ -1,6 +1,7 @@
 const prisma = require("../config/prisma");
 const AppError = require("../utils/appError");
 const asyncHandler = require("../utils/asyncHandler");
+const { Prisma } = require("@prisma/client");
 const { buildOrderWhatsAppLinks, buildOrderWhatsAppMessages } = require("../utils/whatsapp");
 const { getFinancialYearStartYear } = require("../utils/financialYear");
 const {
@@ -676,13 +677,240 @@ function buildOrderSearchClause(token) {
   return { OR: orConditions };
 }
 
+function buildOrderSearchWhere(searchField, search) {
+  const normalizedSearch = normalizeSearch(search);
+  if (!normalizedSearch) {
+    return null;
+  }
+
+  const selectedField = String(searchField || "").trim();
+  const numericValue = parseNumericSearchToken(normalizedSearch);
+
+  switch (selectedField) {
+    case "orderNo":
+      return numericValue === null ? { id: "__no_order_search_match__" } : { orderNo: numericValue };
+    case "orderDate": {
+      const date = new Date(normalizedSearch);
+      if (Number.isNaN(date.getTime())) {
+        return { id: "__no_order_search_match__" };
+      }
+      const start = new Date(date);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(date);
+      end.setHours(23, 59, 59, 999);
+      return {
+        orderDate: {
+          gte: start,
+          lte: end,
+        },
+      };
+    }
+    case "customerName":
+      return { customer: { name: { contains: normalizedSearch, mode: "insensitive" } } };
+    case "customerFirmName":
+      return { customer: { firmName: { contains: normalizedSearch, mode: "insensitive" } } };
+    case "manufacturerName":
+      return { manufacturer: { name: { contains: normalizedSearch, mode: "insensitive" } } };
+    case "manufacturerFirmName":
+      return { manufacturer: { firmName: { contains: normalizedSearch, mode: "insensitive" } } };
+    case "qualityName":
+      return { quality: { name: { contains: normalizedSearch, mode: "insensitive" } } };
+    case "quantity":
+    case "processedQuantity":
+    case "processedMeter":
+    case "rate":
+    case "lotMeters":
+    case "meter":
+    case "commissionAmount":
+      return numericValue === null
+        ? { id: "__no_order_search_match__" }
+        : { [selectedField]: numericValue };
+    case "paymentDueOn":
+      return numericValue === null || !Number.isInteger(numericValue)
+        ? { id: "__no_order_search_match__" }
+        : { paymentDueOn: numericValue };
+    case "status": {
+      const status = normalizedSearch.toUpperCase();
+      return Object.values(ORDER_STATUS).includes(status)
+        ? { status }
+        : { id: "__no_order_search_match__" };
+    }
+    case "remarks":
+      return { remarks: { contains: normalizedSearch, mode: "insensitive" } };
+    case "customerRemark":
+      return { customerRemark: { contains: normalizedSearch, mode: "insensitive" } };
+    case "manufacturerRemark":
+      return { manufacturerRemark: { contains: normalizedSearch, mode: "insensitive" } };
+    default: {
+      const searchTokens = tokenizeSearch(normalizedSearch);
+      const searchConditions = searchTokens.map((token) => buildOrderSearchClause(token)).filter(Boolean);
+      return searchConditions.length ? { AND: searchConditions } : null;
+    }
+  }
+}
+
+const ORDER_NUMERIC_SUBSTRING_FIELDS = new Set([
+  "orderNo",
+  "quantity",
+  "processedQuantity",
+  "processedMeter",
+  "rate",
+  "lotMeters",
+  "meter",
+  "commissionAmount",
+  "paymentDueOn",
+]);
+
+function isOrderNumericSubstringField(searchField) {
+  return ORDER_NUMERIC_SUBSTRING_FIELDS.has(String(searchField || "").trim());
+}
+
+function sqlColumn(alias, field) {
+  return Prisma.raw(`${alias}."${field}"`);
+}
+
+function buildOrderSortSql(sortBy, sortOrder) {
+  switch (sortBy) {
+    case "customerName":
+      return Prisma.sql`c."name" ${Prisma.raw(sortOrder)}`;
+    case "manufacturerName":
+      return Prisma.sql`m."name" ${Prisma.raw(sortOrder)}`;
+    case "qualityName":
+      return Prisma.sql`q."name" ${Prisma.raw(sortOrder)}`;
+    default:
+      return Prisma.sql`${sqlColumn("o", sortBy)} ${Prisma.raw(sortOrder)}`;
+  }
+}
+
+function buildOrderRawWhereClauses({
+  userId,
+  selectedFinancialYearStart,
+  customerId,
+  manufacturerId,
+  qualityId,
+  fromDate,
+  toDate,
+  statusFilter,
+  searchField,
+  search,
+}) {
+  const clauses = [
+    Prisma.sql`o."userId" = ${userId}`,
+    Prisma.sql`o."fyStartYear" = ${selectedFinancialYearStart}`,
+  ];
+
+  if (customerId) {
+    clauses.push(Prisma.sql`o."customerId" = ${customerId}`);
+  }
+  if (manufacturerId) {
+    clauses.push(Prisma.sql`o."manufacturerId" = ${manufacturerId}`);
+  }
+  if (qualityId) {
+    clauses.push(Prisma.sql`o."qualityId" = ${qualityId}`);
+  }
+  if (fromDate) {
+    clauses.push(Prisma.sql`o."orderDate" >= ${fromDate}`);
+  }
+  if (toDate) {
+    clauses.push(Prisma.sql`o."orderDate" <= ${toDate}`);
+  }
+  if (statusFilter) {
+    clauses.push(Prisma.sql`o."status" = ${statusFilter}`);
+  }
+
+  const normalizedSearch = normalizeSearch(search);
+  if (normalizedSearch) {
+    const likePattern = `%${normalizedSearch}%`;
+    const numericSearch = parseNumericSearchToken(normalizedSearch);
+
+    if (isOrderNumericSubstringField(searchField)) {
+      const field = String(searchField).trim();
+      clauses.push(
+        Prisma.sql`CAST(${sqlColumn("o", field)} AS TEXT) ILIKE ${likePattern}`
+      );
+    } else {
+      const searchClause = buildOrderSearchWhere(searchField, normalizedSearch);
+      if (searchClause) {
+        // Fallback for non-numeric field searches stays in Prisma query path.
+        clauses.push(Prisma.sql`TRUE`);
+      }
+    }
+  }
+
+  return clauses;
+}
+
+async function findOrderIdsByNumericSearch({
+  userId,
+  selectedFinancialYearStart,
+  customerId,
+  manufacturerId,
+  qualityId,
+  fromDate,
+  toDate,
+  statusFilter,
+  searchField,
+  search,
+  sortBy,
+  sortOrder,
+  skip,
+  take,
+}) {
+  const normalizedSearch = normalizeSearch(search);
+  if (!normalizedSearch || !isOrderNumericSubstringField(searchField)) {
+    return null;
+  }
+
+  const clauses = buildOrderRawWhereClauses({
+    userId,
+    selectedFinancialYearStart,
+    customerId,
+    manufacturerId,
+    qualityId,
+    fromDate,
+    toDate,
+    statusFilter,
+    searchField,
+    search: normalizedSearch,
+  });
+
+  const whereSql = Prisma.join(clauses, Prisma.sql` AND `);
+  const orderSql = buildOrderSortSql(sortBy, sortOrder);
+  const limitSql = skip === undefined || take === undefined ? Prisma.empty : Prisma.sql`LIMIT ${take} OFFSET ${skip}`;
+
+  const ids = await prisma.$queryRaw`
+    SELECT o."id"
+    FROM "Order" o
+    LEFT JOIN "Customer" c ON c."id" = o."customerId"
+    LEFT JOIN "Manufacturer" m ON m."id" = o."manufacturerId"
+    LEFT JOIN "Quality" q ON q."id" = o."qualityId"
+    WHERE ${whereSql}
+    ORDER BY ${orderSql}
+    ${limitSql}
+  `;
+
+  const totalRows = await prisma.$queryRaw`
+    SELECT COUNT(*)::int AS count
+    FROM "Order" o
+    LEFT JOIN "Customer" c ON c."id" = o."customerId"
+    LEFT JOIN "Manufacturer" m ON m."id" = o."manufacturerId"
+    LEFT JOIN "Quality" q ON q."id" = o."qualityId"
+    WHERE ${whereSql}
+  `;
+
+  return {
+    ids: ids.map((row) => row.id),
+    total: totalRows[0]?.count || 0,
+  };
+}
+
 const listOrders = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
   const selectedFinancialYearStart = await getSelectedFinancialYearStartForUser(userId);
   const pagination = parsePagination(req.query);
   const { sortBy, sortOrder } = parseSort(req.query, ORDER_SORT_FIELDS, "createdAt", "desc");
   const search = normalizeSearch(req.query.search);
-  const searchTokens = tokenizeSearch(search);
+  const searchWhere = buildOrderSearchWhere(req.query.searchField, search);
   const customerId = req.query.customerId ? String(req.query.customerId).trim() : null;
   const manufacturerId = req.query.manufacturerId ? String(req.query.manufacturerId).trim() : null;
   const qualityId = req.query.qualityId ? String(req.query.qualityId).trim() : null;
@@ -698,7 +926,10 @@ const listOrders = asyncHandler(async (req, res) => {
   if (statusFilter && !Object.values(ORDER_STATUS).includes(statusFilter)) {
     throw new AppError("status must be one of: PENDING, COMPLETED, CANCELLED", 400);
   }
-  const searchConditions = searchTokens.map((token) => buildOrderSearchClause(token)).filter(Boolean);
+  const searchField = String(req.query.searchField || "").trim();
+  const normalizedSearch = normalizeSearch(search);
+  const useInMemoryNumericSubstringSearch =
+    Boolean(normalizedSearch) && isOrderNumericSubstringField(searchField);
 
   const where = {
     userId,
@@ -719,24 +950,45 @@ const listOrders = asyncHandler(async (req, res) => {
           status: statusFilter,
         }
       : {}),
-    ...(searchConditions.length
-      ? {
-          AND: searchConditions,
-        }
-      : {}),
+    ...(!useInMemoryNumericSubstringSearch ? searchWhere || {} : {}),
   };
 
-  const orders = await prisma.order.findMany({
+  const queryOptions = {
     where,
     orderBy: buildOrderSort(sortBy, sortOrder),
-    skip: pagination.skip,
-    take: pagination.take,
     include: {
       user: { select: { id: true, name: true, email: true } },
       customer: true,
       manufacturer: true,
       quality: true,
     },
+  };
+
+  if (useInMemoryNumericSubstringSearch) {
+    const allOrders = await prisma.order.findMany(queryOptions);
+    const filteredOrders = allOrders.filter((order) => {
+      const fieldValue = order[searchField];
+      if (fieldValue === null || fieldValue === undefined) {
+        return false;
+      }
+      return String(fieldValue).includes(normalizedSearch);
+    });
+    const normalized = filteredOrders.map(normalizeOrder);
+
+    if (!pagination.enabled) {
+      return res.json(normalized);
+    }
+
+    const paginated = normalized.slice(pagination.skip, pagination.skip + pagination.take);
+    return res.json(
+      buildPaginatedResponse(paginated, normalized.length, pagination.page, pagination.limit)
+    );
+  }
+
+  const orders = await prisma.order.findMany({
+    ...queryOptions,
+    skip: pagination.skip,
+    take: pagination.take,
   });
 
   const normalized = orders.map(normalizeOrder);

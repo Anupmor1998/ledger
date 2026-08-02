@@ -87,6 +87,68 @@ function mergeCustomerFields(base, incoming) {
   };
 }
 
+function buildCustomerSearchWhere(searchField, search) {
+  const normalizedSearch = normalizeSearch(search);
+  if (!normalizedSearch) {
+    return null;
+  }
+
+  const selectedField = String(searchField || "").trim();
+
+  switch (selectedField) {
+    case "firmName":
+    case "name":
+    case "gstNo":
+    case "email":
+    case "phone":
+    case "address":
+      return {
+        [selectedField]: {
+          contains: normalizedSearch,
+          mode: "insensitive",
+        },
+      };
+    case "commissionBase": {
+      const commissionBase = normalizedSearch.toUpperCase();
+      if (!Object.values(COMMISSION_BASE).includes(commissionBase)) {
+        return { id: "__no_customer_search_match__" };
+      }
+      return { commissionBase };
+    }
+    case "commissionPercent":
+    case "commissionLotRate": {
+      const numericValue = Number(normalizedSearch);
+      if (!Number.isFinite(numericValue)) {
+        return { id: "__no_customer_search_match__" };
+      }
+      return { [selectedField]: numericValue };
+    }
+    default: {
+      const searchTokens = tokenizeSearch(normalizedSearch);
+      const searchConditions = searchTokens.map((token) => {
+        const normalizedCommissionBaseToken = String(token || "").toUpperCase();
+        const commissionBaseFilter = Object.values(COMMISSION_BASE).includes(normalizedCommissionBaseToken)
+          ? [{ commissionBase: { equals: normalizedCommissionBaseToken } }]
+          : [];
+
+        return {
+          OR: [
+            { firmName: { contains: token, mode: "insensitive" } },
+            { name: { contains: token, mode: "insensitive" } },
+            { gstNo: { contains: token, mode: "insensitive" } },
+            { email: { contains: token, mode: "insensitive" } },
+            { phone: { contains: token, mode: "insensitive" } },
+            { address: { contains: token, mode: "insensitive" } },
+            ...commissionBaseFilter,
+          ],
+        };
+      });
+
+      return searchConditions.length ? { AND: searchConditions } : null;
+    }
+  }
+}
+
 function roundCurrency(value) {
   return Math.round(Number(value || 0));
 }
@@ -391,7 +453,11 @@ const listCustomers = asyncHandler(async (req, res) => {
   const pagination = parsePagination(req.query);
   const { sortBy, sortOrder } = parseSort(req.query, CUSTOMER_SORT_FIELDS, "createdAt", "desc");
   const search = normalizeSearch(req.query.search);
-  const searchTokens = tokenizeSearch(search);
+  const searchField = String(req.query.searchField || "").trim();
+  const normalizedSearch = normalizeSearch(search);
+  const useInMemoryNumericSubstringSearch =
+    Boolean(normalizedSearch) && ["commissionPercent", "commissionLotRate"].includes(searchField);
+  const searchWhere = buildCustomerSearchWhere(req.query.searchField, search);
   const duplicatesOnly = String(req.query.duplicatesOnly || "").toLowerCase() === "true";
 
   const duplicateSourceRows = await prisma.customer.findMany({
@@ -415,38 +481,44 @@ const listCustomers = asyncHandler(async (req, res) => {
           },
         }
       : {}),
-    ...(searchTokens.length
-      ? {
-        AND: searchTokens.map((token) => {
-          const normalizedCommissionBaseToken = String(token || "").toUpperCase();
-          const commissionBaseFilter = Object.values(COMMISSION_BASE).includes(normalizedCommissionBaseToken)
-            ? [{ commissionBase: { equals: normalizedCommissionBaseToken } }]
-            : [];
-
-          return {
-            OR: [
-              { firmName: { contains: token, mode: "insensitive" } },
-              { name: { contains: token, mode: "insensitive" } },
-              { gstNo: { contains: token, mode: "insensitive" } },
-              { email: { contains: token, mode: "insensitive" } },
-              { phone: { contains: token, mode: "insensitive" } },
-              { address: { contains: token, mode: "insensitive" } },
-              ...commissionBaseFilter,
-            ],
-          };
-        }),
-      }
-      : {}),
+    ...(!useInMemoryNumericSubstringSearch ? searchWhere || {} : {}),
   };
 
   const findOptions = {
     where,
     orderBy: { [sortBy]: sortOrder },
-    skip: pagination.skip,
-    take: pagination.take,
   };
 
-  const customers = await prisma.customer.findMany(findOptions);
+  if (useInMemoryNumericSubstringSearch) {
+    const customers = await prisma.customer.findMany(findOptions);
+    const filteredCustomers = customers.filter((customer) => {
+      const fieldValue = customer[searchField];
+      if (fieldValue === null || fieldValue === undefined) {
+        return false;
+      }
+      return String(fieldValue).includes(normalizedSearch);
+    });
+    const enrichedCustomers = filteredCustomers.map((customer) => ({
+      ...customer,
+      duplicateCount: duplicateStats.duplicateCounts[customer.id] || 0,
+      hasDuplicate: Boolean(duplicateStats.duplicateCounts[customer.id]),
+    }));
+
+    if (!pagination.enabled) {
+      return res.json(enrichedCustomers);
+    }
+
+    const paginated = enrichedCustomers.slice(pagination.skip, pagination.skip + pagination.take);
+    return res.json(
+      buildPaginatedResponse(paginated, enrichedCustomers.length, pagination.page, pagination.limit)
+    );
+  }
+
+  const customers = await prisma.customer.findMany({
+    ...findOptions,
+    skip: pagination.skip,
+    take: pagination.take,
+  });
   const enrichedCustomers = customers.map((customer) => ({
     ...customer,
     duplicateCount: duplicateStats.duplicateCounts[customer.id] || 0,
