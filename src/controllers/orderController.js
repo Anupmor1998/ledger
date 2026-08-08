@@ -205,6 +205,27 @@ function toQuantityFromMeter({ meter, quantityUnit, lotMeters }) {
   return meter / (lotMeters / TAKKA_PER_LOT);
 }
 
+function convertQuantityToOrderUnit({ quantity, inputUnit, orderUnit, lotMeters }) {
+  const normalizedInputUnit = String(inputUnit || "").toUpperCase();
+  const normalizedOrderUnit = String(orderUnit || "").toUpperCase();
+  const meter =
+    normalizedInputUnit === QUANTITY_UNITS.METER
+      ? quantity
+      : toMeterFromQuantity({
+          quantity,
+          quantityUnit: normalizedInputUnit,
+          lotMeters,
+        });
+
+  return normalizedOrderUnit === QUANTITY_UNITS.METER
+    ? meter
+    : toQuantityFromMeter({
+        meter,
+        quantityUnit: normalizedOrderUnit,
+        lotMeters,
+      });
+}
+
 function toLotQuantity({ quantity, quantityUnit, lotMeters }) {
   if (quantityUnit === QUANTITY_UNITS.LOT) {
     return quantity;
@@ -1042,6 +1063,7 @@ const updateOrder = asyncHandler(async (req, res) => {
     deliveryDateFrom,
     deliveryDateTo,
     processedQuantity,
+    processedQuantityUnit,
     processedQuantityAdd,
     processedQuantityAddUnit,
     status,
@@ -1100,6 +1122,12 @@ const updateOrder = asyncHandler(async (req, res) => {
     (!Number.isFinite(Number(processedQuantity)) || Number(processedQuantity) < 0)
   ) {
     throw new AppError("processedQuantity must be a number and cannot be negative", 400);
+  }
+  if (
+    processedQuantityUnit !== undefined &&
+    !Object.values(QUANTITY_UNITS).includes(String(processedQuantityUnit).toUpperCase())
+  ) {
+    throw new AppError("processedQuantityUnit must be one of: TAKKA, LOT, METER", 400);
   }
   if (
     processedQuantityAdd !== undefined &&
@@ -1305,45 +1333,52 @@ const updateOrder = asyncHandler(async (req, res) => {
         );
         const existingProcessedQuantity = Number(existing.processedQuantity || 0);
         const existingProcessedMeter = Number(existing.processedMeter || 0);
+        const effectiveProcessedQuantityUnit =
+          processedQuantityUnit !== undefined
+            ? String(processedQuantityUnit).toUpperCase()
+            : effectiveQuantityUnit;
 
         if (processedQuantity !== undefined) {
           const nextProcessedQuantity = Number(processedQuantity);
-          const nextProcessedMeter = toMeterFromQuantity({
-            quantity: nextProcessedQuantity,
-            quantityUnit: effectiveQuantityUnit,
-            lotMeters: effectiveLotMeters,
-          });
-          updateData.processedQuantity = round2(nextProcessedQuantity);
+          const nextProcessedMeter =
+            effectiveProcessedQuantityUnit === QUANTITY_UNITS.METER
+              ? nextProcessedQuantity
+              : toMeterFromQuantity({
+                  quantity: nextProcessedQuantity,
+                  quantityUnit: effectiveProcessedQuantityUnit,
+                  lotMeters: effectiveLotMeters,
+                });
+          updateData.processedQuantity = round2(
+            convertQuantityToOrderUnit({
+              quantity: nextProcessedQuantity,
+              inputUnit: effectiveProcessedQuantityUnit,
+              orderUnit: effectiveQuantityUnit,
+              lotMeters: effectiveLotMeters,
+            })
+          );
           updateData.processedMeter = round2(nextProcessedMeter);
         }
 
         if (processedQuantityAdd !== undefined) {
           const processedAddValue = Number(processedQuantityAdd);
-          const processedAddUnit = String(processedQuantityAddUnit || effectiveQuantityUnit).toUpperCase();
+          const processedAddUnit = String(
+            processedQuantityAddUnit || effectiveProcessedQuantityUnit || effectiveQuantityUnit
+          ).toUpperCase();
 
-          if (processedAddUnit !== effectiveQuantityUnit && processedAddUnit !== QUANTITY_UNITS.METER) {
-            throw new AppError(
-              `processedQuantityAddUnit must be ${effectiveQuantityUnit} or METER for this order`,
-              400
-            );
-          }
-
-          let quantityIncrement = processedAddValue;
-          let meterIncrement = processedAddValue;
-
-          if (processedAddUnit === QUANTITY_UNITS.METER) {
-            quantityIncrement = toQuantityFromMeter({
-              meter: processedAddValue,
-              quantityUnit: effectiveQuantityUnit,
-              lotMeters: effectiveLotMeters,
-            });
-          } else {
-            meterIncrement = toMeterFromQuantity({
-              quantity: processedAddValue,
-              quantityUnit: effectiveQuantityUnit,
-              lotMeters: effectiveLotMeters,
-            });
-          }
+          const quantityIncrement = convertQuantityToOrderUnit({
+            quantity: processedAddValue,
+            inputUnit: processedAddUnit,
+            orderUnit: effectiveQuantityUnit,
+            lotMeters: effectiveLotMeters,
+          });
+          const meterIncrement =
+            processedAddUnit === QUANTITY_UNITS.METER
+              ? processedAddValue
+              : toMeterFromQuantity({
+                  quantity: processedAddValue,
+                  quantityUnit: processedAddUnit,
+                  lotMeters: effectiveLotMeters,
+                });
 
           updateData.processedQuantity = round2(existingProcessedQuantity + quantityIncrement);
           updateData.processedMeter = round2(existingProcessedMeter + meterIncrement);
