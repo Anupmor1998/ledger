@@ -22,15 +22,7 @@ function normalizeOrder(order) {
   const processedMeter = Number(order.processedMeter || 0);
   const normalizedCommissionAmount = order.commissionAmount === null ? null : Number(order.commissionAmount);
   const progressCommissionAmount =
-    String(order.status || "").toUpperCase() === ORDER_STATUS.COMPLETED
-      ? roundCurrency(normalizedCommissionAmount)
-      : computeProportionalCommissionAmount({
-          processedQuantity,
-          totalQuantity: Number(order.quantity || 0),
-          processedMeter,
-          totalMeter: Number(order.meter || 0),
-          fullCommissionAmount: Number(normalizedCommissionAmount || 0),
-        });
+    computeLiveProgressCommissionAmount(order);
 
   return {
     ...order,
@@ -114,6 +106,37 @@ function computeProportionalCommissionAmount({
   const normalizedProcessedQuantity = Math.max(Number(processedQuantity || 0), 0);
   const completionRatio = normalizedProcessedQuantity / normalizedTotalQuantity;
   return roundCurrency(normalizedFullCommission * completionRatio);
+}
+
+function computeLiveProgressCommissionAmount(order) {
+  const quantity = Number(order?.quantity || 0);
+  const rate = Number(order?.rate || 0);
+  const lotMeters = order?.lotMeters === null || order?.lotMeters === undefined ? null : Number(order.lotMeters);
+  const commissionConfig = order?.customer || null;
+  const fullCommissionAmount = computeCommissionAmount({
+    quantityForCommission: quantity,
+    rate,
+    quantityUnit: order?.quantityUnit,
+    lotMeters,
+    customerCommissionConfig: commissionConfig,
+  });
+
+  const processedMeter = Number(order?.processedMeter || 0);
+  const totalMeter = Number(order?.meter || 0);
+  if (
+    Number.isFinite(processedMeter) &&
+    Number.isFinite(totalMeter) &&
+    totalMeter > 0
+  ) {
+    return roundCurrency((fullCommissionAmount * processedMeter) / totalMeter);
+  }
+
+  if (Number.isFinite(quantity) && quantity > 0) {
+    const processedQuantity = Number(order?.processedQuantity || 0);
+    return roundCurrency((fullCommissionAmount * processedQuantity) / quantity);
+  }
+
+  return roundCurrency(fullCommissionAmount);
 }
 
 function parseLotMetersInput(value, quantityUnit) {
