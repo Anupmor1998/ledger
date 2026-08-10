@@ -92,7 +92,14 @@ function buildCustomerContactLine(order) {
 }
 
 function buildManufacturerDisplay(order) {
-  return order.manufacturer?.firmName || order.manufacturer?.name || "-";
+  const firmName = String(order.manufacturer?.firmName || "").trim();
+  const manufacturerName = String(order.manufacturer?.name || "").trim();
+
+  if (firmName && manufacturerName) {
+    return `${firmName} (${manufacturerName})`;
+  }
+
+  return firmName || manufacturerName || "-";
 }
 
 function buildBrokerDisplay(order) {
@@ -163,7 +170,7 @@ function buildCustomerMessage(order) {
     "*Order Details*",
     ...buildOrderDetailLines(order, paymentDueDays, "CUSTOMER", mergedRemark),
     "",
-    `Manufactures-${buildManufacturerDisplay(order)}`,
+    `Manufactures - ${buildManufacturerDisplay(order)}`,
     "",
     `Broker - ${buildBrokerDisplay(order)}`,
   ].join("\n");
