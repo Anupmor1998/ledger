@@ -16,6 +16,12 @@ const {
   parsePagination,
   parseSort,
 } = require("../utils/listQuery");
+const {
+  ORDER_ACTIVITY_ACTIONS,
+  buildOrderAuditSnapshot,
+  getChangedFields,
+  recordOrderActivity,
+} = require("../utils/orderActivity");
 
 function normalizeOrder(order) {
   const processedQuantity = Number(order.processedQuantity || 0);
@@ -137,6 +143,29 @@ function computeLiveProgressCommissionAmount(order) {
   }
 
   return roundCurrency(fullCommissionAmount);
+}
+
+function resolveOrderActivityAction(beforeStatus, afterStatus, updateData) {
+  const normalizedBefore = String(beforeStatus || "").toUpperCase();
+  const normalizedAfter = String(afterStatus || "").toUpperCase();
+
+  if (normalizedAfter === ORDER_STATUS.COMPLETED && normalizedBefore !== ORDER_STATUS.COMPLETED) {
+    return ORDER_ACTIVITY_ACTIONS.COMPLETED;
+  }
+  if (normalizedAfter === ORDER_STATUS.PENDING && normalizedBefore === ORDER_STATUS.COMPLETED) {
+    return ORDER_ACTIVITY_ACTIONS.REOPENED;
+  }
+  if (normalizedAfter === ORDER_STATUS.CANCELLED) {
+    return ORDER_ACTIVITY_ACTIONS.CANCELLED;
+  }
+  if (
+    updateData.processedQuantity !== undefined ||
+    updateData.processedMeter !== undefined ||
+    updateData.processedQuantityAdd !== undefined
+  ) {
+    return ORDER_ACTIVITY_ACTIONS.PROGRESS_UPDATED;
+  }
+  return ORDER_ACTIVITY_ACTIONS.UPDATED;
 }
 
 function parseLotMetersInput(value, quantityUnit) {
@@ -596,7 +625,7 @@ const createOrder = asyncHandler(async (req, res) => {
         );
         const nextOrderNo = await getNextOrderNo(tx, userId, fyStartYear);
 
-        return tx.order.create({
+        const createdOrder = await tx.order.create({
           data: {
             userId,
             fyStartYear,
@@ -629,6 +658,16 @@ const createOrder = asyncHandler(async (req, res) => {
             quality: true,
           },
         });
+
+        await recordOrderActivity(tx, {
+          userId,
+          orderId: createdOrder.id,
+          action: ORDER_ACTIVITY_ACTIONS.CREATED,
+          beforeData: null,
+          afterData: buildOrderAuditSnapshot(createdOrder),
+        });
+
+        return createdOrder;
       });
       break;
     } catch (error) {
@@ -1542,6 +1581,23 @@ const updateOrder = asyncHandler(async (req, res) => {
         });
 
         await syncPendingPaymentForOrder(tx, updatedOrder);
+
+        const beforeSnapshot = buildOrderAuditSnapshot(existing);
+        const afterSnapshot = buildOrderAuditSnapshot(updatedOrder);
+        const changedFields = getChangedFields(beforeSnapshot, afterSnapshot);
+        const activityAction = resolveOrderActivityAction(existing.status, updatedOrder.status, updateData);
+
+        await recordOrderActivity(tx, {
+          userId,
+          orderId: updatedOrder.id,
+          action: activityAction,
+          beforeData: beforeSnapshot,
+          afterData: afterSnapshot,
+          metadata: {
+            changedFields,
+          },
+        });
+
         return updatedOrder;
       });
       break;
@@ -1556,11 +1612,206 @@ const updateOrder = asyncHandler(async (req, res) => {
   return res.json(normalizeOrder(order));
 });
 
+const getOrderActivity = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+  const { id } = req.params;
+
+  const activities = await prisma.orderActivity.findMany({
+    where: {
+      userId,
+      orderId: id,
+    },
+    orderBy: [{ createdAt: "desc" }],
+  });
+
+  return res.json(
+    activities.map((activity) => ({
+      id: activity.id,
+      action: activity.action,
+      beforeData: activity.beforeData,
+      afterData: activity.afterData,
+      metadata: activity.metadata,
+      createdAt: activity.createdAt,
+    }))
+  );
+});
+
+const ORDER_ACTIVITY_SORT_FIELDS = ["createdAt", "action"];
+
+const ORDER_ACTIVITY_SEARCH_FIELDS = {
+  ORDER_NO: "orderNo",
+  ACTION: "action",
+  CUSTOMER_NAME: "customerName",
+  CUSTOMER_FIRM_NAME: "customerFirmName",
+  MANUFACTURER_NAME: "manufacturerName",
+  MANUFACTURER_FIRM_NAME: "manufacturerFirmName",
+  QUALITY_NAME: "qualityName",
+};
+
+function isOrderActivityNumericSubstringField(field) {
+  return String(field || "").trim() === ORDER_ACTIVITY_SEARCH_FIELDS.ORDER_NO;
+}
+
+function matchesActivitySearch(activity, searchField, search) {
+  const normalizedSearch = normalizeSearch(search);
+  if (!normalizedSearch) {
+    return true;
+  }
+
+  const field = String(searchField || "").trim();
+  const lowerSearch = normalizedSearch.toLowerCase();
+  const orderNo = activity.order?.orderNo;
+
+  const customerName = activity.order?.customer?.name || "";
+  const customerFirmName = activity.order?.customer?.firmName || "";
+  const manufacturerName = activity.order?.manufacturer?.name || "";
+  const manufacturerFirmName = activity.order?.manufacturer?.firmName || "";
+  const qualityName = activity.order?.quality?.name || "";
+  const action = activity.action || "";
+  const changedFields = Array.isArray(activity.metadata?.changedFields)
+    ? activity.metadata.changedFields.map((value) => String(value || "").toLowerCase())
+    : [];
+
+  if (field === ORDER_ACTIVITY_SEARCH_FIELDS.ORDER_NO) {
+    return String(orderNo || "").includes(normalizedSearch);
+  }
+  if (field === ORDER_ACTIVITY_SEARCH_FIELDS.ACTION) {
+    return action.toLowerCase().includes(lowerSearch);
+  }
+  if (field === ORDER_ACTIVITY_SEARCH_FIELDS.CUSTOMER_NAME) {
+    return customerName.toLowerCase().includes(lowerSearch) || customerFirmName.toLowerCase().includes(lowerSearch);
+  }
+  if (field === ORDER_ACTIVITY_SEARCH_FIELDS.CUSTOMER_FIRM_NAME) {
+    return customerFirmName.toLowerCase().includes(lowerSearch);
+  }
+  if (field === ORDER_ACTIVITY_SEARCH_FIELDS.MANUFACTURER_NAME) {
+    return (
+      manufacturerName.toLowerCase().includes(lowerSearch) ||
+      manufacturerFirmName.toLowerCase().includes(lowerSearch)
+    );
+  }
+  if (field === ORDER_ACTIVITY_SEARCH_FIELDS.MANUFACTURER_FIRM_NAME) {
+    return manufacturerFirmName.toLowerCase().includes(lowerSearch);
+  }
+  if (field === ORDER_ACTIVITY_SEARCH_FIELDS.QUALITY_NAME) {
+    return qualityName.toLowerCase().includes(lowerSearch);
+  }
+
+  return (
+    action.toLowerCase().includes(lowerSearch) ||
+    String(orderNo || "").includes(normalizedSearch) ||
+    customerName.toLowerCase().includes(lowerSearch) ||
+    customerFirmName.toLowerCase().includes(lowerSearch) ||
+    manufacturerName.toLowerCase().includes(lowerSearch) ||
+    manufacturerFirmName.toLowerCase().includes(lowerSearch) ||
+    qualityName.toLowerCase().includes(lowerSearch) ||
+    changedFields.some((fieldName) => fieldName.includes(lowerSearch))
+  );
+}
+
+const listOrderActivities = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+  const selectedFinancialYearStart = await getSelectedFinancialYearStartForUser(userId);
+  const pagination = parsePagination(req.query);
+  const { sortBy, sortOrder } = parseSort(req.query, ORDER_ACTIVITY_SORT_FIELDS, "createdAt", "desc");
+  const search = normalizeSearch(req.query.search);
+  const searchField = String(req.query.searchField || "").trim();
+  const actionFilter = req.query.action ? String(req.query.action).trim().toUpperCase() : null;
+  const orderNoFilter = req.query.orderNo ? Number.parseInt(String(req.query.orderNo), 10) : null;
+  const fromDate = req.query.from ? new Date(String(req.query.from)) : null;
+  const toDate = req.query.to ? new Date(String(req.query.to)) : null;
+
+  if (fromDate && Number.isNaN(fromDate.getTime())) {
+    throw new AppError("invalid from date", 400);
+  }
+  if (toDate && Number.isNaN(toDate.getTime())) {
+    throw new AppError("invalid to date", 400);
+  }
+  if (orderNoFilter !== null && !Number.isFinite(orderNoFilter)) {
+    throw new AppError("orderNo must be a valid number", 400);
+  }
+  const activities = await prisma.orderActivity.findMany({
+    where: { userId },
+    orderBy: [{ [sortBy]: sortOrder }],
+    include: {
+      order: {
+        include: {
+          customer: true,
+          manufacturer: true,
+          quality: true,
+        },
+      },
+    },
+  });
+
+  const filtered = activities.filter((activity) => {
+    if (activity.order?.fyStartYear !== selectedFinancialYearStart) {
+      return false;
+    }
+    if (actionFilter && String(activity.action || "").toUpperCase() !== actionFilter) {
+      return false;
+    }
+    if (fromDate && activity.createdAt < fromDate) {
+      return false;
+    }
+    if (toDate && activity.createdAt > toDate) {
+      return false;
+    }
+    if (orderNoFilter !== null && activity.order?.orderNo !== orderNoFilter) {
+      return false;
+    }
+    return matchesActivitySearch(activity, searchField, search);
+  });
+
+  const normalized = filtered.map((activity) => ({
+    id: activity.id,
+    action: activity.action,
+    beforeData: activity.beforeData,
+    afterData: activity.afterData,
+    metadata: activity.metadata,
+    createdAt: activity.createdAt,
+    order: activity.order,
+  }));
+
+  if (!pagination.enabled) {
+    return res.json(normalized);
+  }
+
+  const paginated = normalized.slice(pagination.skip, pagination.skip + pagination.take);
+  return res.json(buildPaginatedResponse(paginated, normalized.length, pagination.page, pagination.limit));
+});
+
 const deleteOrder = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
   const { id } = req.params;
-  const deleted = await prisma.order.deleteMany({ where: { id, userId } });
-  if (deleted.count === 0) {
+
+  const deleted = await prisma.$transaction(async (tx) => {
+    const existing = await tx.order.findFirst({
+      where: { id, userId },
+      include: {
+        customer: true,
+        manufacturer: true,
+        quality: true,
+      },
+    });
+
+    if (!existing) {
+      return null;
+    }
+
+    await recordOrderActivity(tx, {
+      userId,
+      orderId: existing.id,
+      action: ORDER_ACTIVITY_ACTIONS.DELETED,
+      beforeData: buildOrderAuditSnapshot(existing),
+      afterData: null,
+    });
+
+    const result = await tx.order.deleteMany({ where: { id, userId } });
+    return result.count > 0 ? existing : null;
+  });
+
+  if (!deleted) {
     throw new AppError("order not found", 404);
   }
   return res.status(204).send();
@@ -1570,6 +1821,8 @@ module.exports = {
   createOrder,
   listOrders,
   getOrderById,
+  getOrderActivity,
+  listOrderActivities,
   updateOrder,
   deleteOrder,
 };

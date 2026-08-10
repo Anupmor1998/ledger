@@ -4,6 +4,11 @@ const AppError = require("../utils/appError");
 const asyncHandler = require("../utils/asyncHandler");
 const { getFinancialYearStartYear, getFinancialYearLabel } = require("../utils/financialYear");
 const { PENDING_PAYMENT_STATUS, round2 } = require("../utils/payments");
+const {
+  ORDER_ACTIVITY_ACTIONS,
+  buildOrderAuditSnapshot,
+  recordOrderActivity,
+} = require("../utils/orderActivity");
 
 const ALLOWED_THEMES = ["light", "dark"];
 const SALT_ROUNDS = 10;
@@ -765,7 +770,25 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
           transferBatchId: batch.id,
           orderDate: new Date(targetYear, 3, 1),
         },
-        select: { id: true },
+        include: {
+          customer: true,
+          manufacturer: true,
+          quality: true,
+        },
+      });
+
+      await recordOrderActivity(tx, {
+        userId,
+        orderId: createdOrder.id,
+        action: ORDER_ACTIVITY_ACTIONS.CARRIED_FORWARD,
+        beforeData: null,
+        afterData: buildOrderAuditSnapshot(createdOrder),
+        metadata: {
+          sourceOrderId: order.id,
+          sourceFyStartYear: order.fyStartYear,
+          targetFyStartYear: targetYear,
+          transferBatchId: batch.id,
+        },
       });
 
       carriedOrderBySourceId.set(order.id, createdOrder.id);
@@ -822,7 +845,25 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
             transferBatchId: batch.id,
             orderDate: new Date(targetYear, 3, 1),
           },
-          select: { id: true },
+          include: {
+            customer: true,
+            manufacturer: true,
+            quality: true,
+          },
+        });
+
+        await recordOrderActivity(tx, {
+          userId,
+          orderId: createdOrder.id,
+          action: ORDER_ACTIVITY_ACTIONS.CARRIED_FORWARD,
+          beforeData: null,
+          afterData: buildOrderAuditSnapshot(createdOrder),
+          metadata: {
+            sourceOrderId: sourceOrder.id,
+            sourceFyStartYear: sourceOrder.fyStartYear,
+            targetFyStartYear: targetYear,
+            transferBatchId: batch.id,
+          },
         });
 
         targetOrderId = createdOrder.id;

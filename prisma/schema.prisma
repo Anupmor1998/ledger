@@ -21,6 +21,7 @@ model User {
   pendingPayments     PendingPayment[]
   paymentReceipts     PaymentReceipt[]
   paymentAllocations  PaymentAllocation[]
+  orderActivities     OrderActivity[]
   remarkTemplates     RemarkTemplate[]
   qualities           Quality[]
   whatsappGroups      WhatsAppGroup[]
@@ -127,6 +128,7 @@ model Order {
   carriedForwardFromOrder Order? @relation("OrderCarryForward", fields: [carriedForwardFromOrderId], references: [id], onDelete: Restrict)
   carriedForwardOrders Order[] @relation("OrderCarryForward")
   transferBatch YearTransferBatch? @relation(fields: [transferBatchId], references: [id], onDelete: SetNull)
+  orderActivities OrderActivity[]
 
   @@index([userId])
   @@index([userId, fyStartYear])
@@ -134,6 +136,24 @@ model Order {
   @@index([manufacturerId])
   @@index([qualityId])
   @@unique([userId, fyStartYear, orderNo])
+}
+
+model OrderActivity {
+  id         String   @id @default(uuid())
+  userId     String
+  orderId    String?
+  action     String
+  beforeData Json?
+  afterData  Json?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  order      Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([orderId])
+  @@index([action])
+  @@index([createdAt])
 }
 
 model PaymentReceipt {
