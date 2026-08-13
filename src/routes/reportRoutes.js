@@ -1,21 +1,17 @@
 const express = require("express");
 const authMiddleware = require("../middlewares/authMiddleware");
 const {
-  exportOrderRegisterReport,
-  exportOrderProgressReport,
-  exportCompletedSettlementReport,
-  exportCancelledOrdersReport,
-  exportManufacturerCommissionReport,
+  exportOrderReport,
+  exportCustomerReport,
+  exportManufacturerReport,
 } = require("../controllers/reportController");
 
 const router = express.Router();
 
 router.use(authMiddleware);
 
-router.get("/order-register.xlsx", exportOrderRegisterReport);
-router.get("/order-progress.xlsx", exportOrderProgressReport);
-router.get("/completed-settlement.xlsx", exportCompletedSettlementReport);
-router.get("/cancelled-orders.xlsx", exportCancelledOrdersReport);
-router.get("/manufacturer-commission.xlsx", exportManufacturerCommissionReport);
+router.get("/order-report.xlsx", exportOrderReport);
+router.get("/customer-report.xlsx", exportCustomerReport);
+router.get("/manufacturer-report.xlsx", exportManufacturerReport);
 
 module.exports = router;
