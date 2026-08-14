@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const authRoutes = require("./routes/authRoutes");
 const customerRoutes = require("./routes/customerRoutes");
+const dashboardRoutes = require("./routes/dashboardRoutes");
 const healthRoutes = require("./routes/healthRoutes");
 const manufacturerRoutes = require("./routes/manufacturerRoutes");
 const orderRoutes = require("./routes/orderRoutes");
@@ -35,6 +36,7 @@ app.use(requestLogger);
 
 app.use(`${apiPrefix}/health`, healthRoutes);
 app.use(`${apiPrefix}/auth`, authRoutes);
+app.use(`${apiPrefix}/dashboard`, dashboardRoutes);
 app.use(`${apiPrefix}/users`, userRoutes);
 app.use(`${apiPrefix}/customers`, customerRoutes);
 app.use(`${apiPrefix}/manufacturers`, manufacturerRoutes);
