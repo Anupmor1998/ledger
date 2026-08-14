@@ -24,6 +24,12 @@ const REPORT_USER_TYPE = {
   MANUFACTURER: "MANUFACTURER",
 };
 
+const REPORT_GROUP_BY = {
+  CUSTOMER: "CUSTOMER",
+  MANUFACTURER: "MANUFACTURER",
+  QUALITY: "QUALITY",
+};
+
 const DEFAULT_REPORT_COMPANY = {
   address:
     "D-601 SONAL RESIDENCY, OPP RESHMA ROW HOUSE, PUNA PATIYA, SURAT-395010",
@@ -94,6 +100,24 @@ function normalizeUserTypeFilter(value) {
   if (!Object.values(REPORT_USER_TYPE).includes(normalized)) {
     throw new AppError("userType must be one of: customer, manufacturer", 400);
   }
+  return normalized;
+}
+
+function normalizeGroupByFilter(value, reportType) {
+  const normalized = String(value || "")
+    .trim()
+    .toUpperCase();
+  if (!normalized) {
+    return REPORT_GROUP_BY.QUALITY;
+  }
+
+  if (!Object.values(REPORT_GROUP_BY).includes(normalized)) {
+    throw new AppError(
+      "groupBy must be one of: customer, manufacturer, quality",
+      400
+    );
+  }
+
   return normalized;
 }
 
@@ -250,69 +274,102 @@ function orderToReportRow(order, reportType) {
   };
 }
 
-function withStatus(where, status) {
-  if (!status) return where;
-  return { ...where, status };
+function getGroupValue(order, groupBy) {
+  if (groupBy === REPORT_GROUP_BY.QUALITY) {
+    return order.quality;
+  }
+  if (groupBy === REPORT_GROUP_BY.MANUFACTURER) {
+    return order.manufacturer;
+  }
+  return order.customer;
 }
 
-function getPartyLabel(reportType) {
-  return reportType === "manufacturer" ? "Customer" : "Manufacturer";
+function getGroupDisplayName(groupValue, groupBy) {
+  if (groupBy === REPORT_GROUP_BY.QUALITY) {
+    return String(groupValue?.name || "").trim() || "UNKNOWN";
+  }
+
+  const label =
+    groupBy === REPORT_GROUP_BY.MANUFACTURER ? "Manufacturer" : "Customer";
+  const firmName = String(groupValue?.firmName || "").trim();
+  const name = String(groupValue?.name || "").trim();
+
+  if (firmName && name) {
+    return `${firmName} (${name})`;
+  }
+  if (firmName) {
+    return firmName;
+  }
+  if (name) {
+    return name;
+  }
+  return `${label}: UNKNOWN`;
 }
 
-function getPartyDisplayInfo(order, reportType) {
-  const party =
-    reportType === "manufacturer" ? order.customer : order.manufacturer;
-  const firmName = String(party?.firmName || party?.name || "").trim();
-  const secondaryName = String(
-    party?.firmName && party?.name ? party.name : "",
-  ).trim();
-  return {
-    id: party?.id || firmName || `party-${order.id}`,
-    firmName: party?.firmName || party?.name || "",
-    name: party?.name || "",
-    gstNo: party?.gstNo || "",
-    address: party?.address || "",
-    phone: party?.phone || "",
-    displayName: secondaryName
-      ? `${firmName} (${secondaryName})`
-      : firmName || "-",
-  };
+function sortReportOrders(orders) {
+  return [...orders].sort((a, b) => {
+    const dateA = new Date(a.orderDate || 0).getTime();
+    const dateB = new Date(b.orderDate || 0).getTime();
+    if (dateA !== dateB) return dateA - dateB;
+    return Number(a.orderNo || 0) - Number(b.orderNo || 0);
+  });
 }
 
-function buildPartySectionHeaderLines(reportType, partyInfo) {
-  return [
-    formatReportLine("Firm Name", partyInfo.displayName),
-    formatReportLine("GSTIN", partyInfo.gstNo || "-"),
-    formatReportLine("Address", partyInfo.address || "-"),
-    formatReportLine("Phone", partyInfo.phone || "-"),
-  ];
-}
-
-function buildReportSections(orders, reportType) {
-  const groups = new Map();
+function buildReportSections(orders, reportType, groupBy) {
+  const groupMap = new Map();
 
   orders.forEach((order) => {
-    const partyInfo = getPartyDisplayInfo(order, reportType);
-    if (!groups.has(partyInfo.id)) {
-      groups.set(partyInfo.id, {
-        partyInfo,
-        rows: [],
+    const groupValue = getGroupValue(order, groupBy);
+    const partyKey =
+      groupValue?.id ||
+      `${String(groupValue?.firmName || groupValue?.name || "")
+        .trim()
+        .toLowerCase()}::${String(groupValue?.name || "")
+        .trim()
+        .toLowerCase()}` ||
+      "unknown";
+
+    if (!groupMap.has(partyKey)) {
+      groupMap.set(partyKey, {
+        groupValue,
+        orders: [],
       });
     }
-    groups.get(partyInfo.id).rows.push(orderToReportRow(order, reportType));
+
+    groupMap.get(partyKey).orders.push(order);
   });
 
-  return Array.from(groups.values()).map(({ partyInfo, rows }) => ({
-    headerLines: buildPartySectionHeaderLines(reportType, partyInfo),
-    columns: buildReportColumns(reportType),
-    rows,
-  }));
+  return [...groupMap.values()]
+    .sort((left, right) =>
+      getGroupDisplayName(left.groupValue, groupBy).localeCompare(
+        getGroupDisplayName(right.groupValue, groupBy),
+        undefined,
+        { sensitivity: "base" }
+      )
+    )
+    .map((group) => {
+      const sortedGroupOrders = sortReportOrders(group.orders);
+      return {
+        showHeader: false,
+        rows: sortedGroupOrders.map((order) => orderToReportRow(order, reportType)),
+        footerLines: [
+          {
+            value: "=========================",
+            alignment: "center",
+            fontSize: 11,
+            bold: true,
+            height: 18,
+          },
+        ],
+      };
+    });
 }
 
 async function exportReportByType(req, res, reportType) {
   const status = normalizeStatusFilter(req.query.status);
+  const groupBy = normalizeGroupByFilter(req.query.groupBy, reportType);
   const userType =
-    reportType === "manufacturer"
+      reportType === "manufacturer"
       ? REPORT_USER_TYPE.MANUFACTURER
       : REPORT_USER_TYPE.CUSTOMER;
   const where = await getOrderFilters(req.query, req.user.userId);
@@ -321,30 +378,6 @@ async function exportReportByType(req, res, reportType) {
   }
 
   const orders = await fetchOrders(where);
-  const companyInfo = getReportCompanyInfo();
-  const currentFinancialYearStart = getFinancialYearStartYear();
-  const selectedFinancialYearStart = await getSelectedFinancialYearStartForUser(
-    req.user.userId,
-  );
-  const fromDate = req.query.from
-    ? formatDisplayDate(req.query.from)
-    : `01/04/${selectedFinancialYearStart}`;
-  const toDate = req.query.to
-    ? formatDisplayDate(req.query.to)
-    : `31/03/${selectedFinancialYearStart + 1}`;
-  const sortedOrders = [...orders].sort((a, b) => {
-    const aValue =
-      reportType === "manufacturer"
-        ? a.customer?.firmName || a.customer?.name || ""
-        : a.manufacturer?.firmName || a.manufacturer?.name || "";
-    const bValue =
-      reportType === "manufacturer"
-        ? b.customer?.firmName || b.customer?.name || ""
-        : b.manufacturer?.firmName || b.manufacturer?.name || "";
-    const nameSort = String(aValue).localeCompare(String(bValue));
-    if (nameSort !== 0) return nameSort;
-    return Number(b.orderNo || 0) - Number(a.orderNo || 0);
-  });
 
   const fileName =
     reportType === "manufacturer"
@@ -352,21 +385,34 @@ async function exportReportByType(req, res, reportType) {
       : "customer-report.xlsx";
   const sheetColumns = buildReportColumns(reportType);
   const headerLines = [
-    `Firm Name : MAHAVEER FAB (GSTIN : 24ABNPJ1957H1ZJ) ${formatFinancialYearRange(currentFinancialYearStart)}`,
-    formatReportLine("Address", companyInfo.address),
-    formatReportLine("Phone", companyInfo.phone),
-    formatReportLine(
-      "DATE",
-      `(${fromDate.toUpperCase()} TO ${toDate.toUpperCase()})`,
-    ),
-    formatReportLine("REPORT", "LEDGER REPORT"),
+    {
+      value: "Moolchand H Vadera",
+      alignment: "center",
+      fontSize: 14,
+      bold: true,
+      height: 24,
+    },
+    {
+      value: "Grey Broker & Commission Agent",
+      alignment: "center",
+      fontSize: 13,
+      bold: true,
+      height: 24,
+    },
+    {
+      value: "(M) 9374565779, 7016605692",
+      alignment: "center",
+      fontSize: 13,
+      bold: true,
+      height: 24,
+    },
   ];
 
   await sendWorkbook(res, fileName, [
     {
       headerLines,
       columns: sheetColumns,
-      sections: buildReportSections(sortedOrders, reportType),
+      sections: buildReportSections(orders, reportType, groupBy),
     },
   ]);
 }

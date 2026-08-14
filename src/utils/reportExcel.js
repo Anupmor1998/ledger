@@ -6,9 +6,13 @@ const META_FILL = {
   fgColor: { argb: "FFD9D9D9" },
 };
 
-function styleMetaCell(cell) {
-  cell.font = { name: "Courier New", size: 11 };
-  cell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+function styleMetaCell(cell, options = {}) {
+  const alignment = options.alignment || "left";
+  const fontSize = options.fontSize || 11;
+  const bold = options.bold ?? false;
+
+  cell.font = { name: "Courier New", size: fontSize, bold };
+  cell.alignment = { horizontal: alignment, vertical: "middle", wrapText: true };
   cell.fill = META_FILL;
 }
 
@@ -22,13 +26,15 @@ function styleHeaderRow(row) {
   });
 }
 
-function writeMergedMetaRow(worksheet, rowIndex, totalColumns, value) {
+function writeMergedMetaRow(worksheet, rowIndex, totalColumns, line) {
+  const value = typeof line === "object" && line !== null ? line.value : line;
+  const options = typeof line === "object" && line !== null ? line : {};
   worksheet.mergeCells(rowIndex, 1, rowIndex, totalColumns);
   for (let colIndex = 1; colIndex <= totalColumns; colIndex += 1) {
-    styleMetaCell(worksheet.getCell(rowIndex, colIndex));
+    styleMetaCell(worksheet.getCell(rowIndex, colIndex), options);
   }
   worksheet.getCell(rowIndex, 1).value = value;
-  worksheet.getRow(rowIndex).height = 22;
+  worksheet.getRow(rowIndex).height = options.height || 22;
 }
 
 function writeTableHeaderRow(worksheet, rowIndex, columns) {
@@ -76,6 +82,8 @@ function addSheet(workbook, sheetConfig) {
       const sectionHeaderLines = Array.isArray(section.headerLines) ? section.headerLines : [];
       const sectionColumns = Array.isArray(section.columns) && section.columns.length > 0 ? section.columns : columns;
       const sectionRows = Array.isArray(section.rows) ? section.rows : [];
+      const showHeader = section.showHeader !== false;
+      const footerLines = Array.isArray(section.footerLines) ? section.footerLines : [];
 
       if (sectionIndex > 0) {
         currentRow += 1;
@@ -86,7 +94,7 @@ function addSheet(workbook, sheetConfig) {
         currentRow += 1;
       });
 
-      if (sectionColumns.length > 0) {
+      if (showHeader && sectionColumns.length > 0) {
         writeTableHeaderRow(worksheet, currentRow, sectionColumns);
         currentRow += 1;
       }
@@ -98,6 +106,11 @@ function addSheet(workbook, sheetConfig) {
           dataRow.getCell(index + 1).font = { name: "Courier New", size: 11 };
           dataRow.getCell(index + 1).alignment = { horizontal: "left", vertical: "middle" };
         });
+        currentRow += 1;
+      });
+
+      footerLines.forEach((line) => {
+        writeMergedMetaRow(worksheet, currentRow, totalColumns, line);
         currentRow += 1;
       });
     });
