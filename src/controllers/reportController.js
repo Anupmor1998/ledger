@@ -158,6 +158,10 @@ function getReportCompanyInfo() {
   return DEFAULT_REPORT_COMPANY;
 }
 
+function getPartyDisplayName(party) {
+  return String(party?.firmName || party?.name || "").trim();
+}
+
 function computeLotValue(order) {
   const quantity = safeNumber(order.quantity);
   const unit = String(order.quantityUnit || "").toUpperCase();
@@ -215,6 +219,24 @@ async function getOrderFilters(query, userId) {
   if (query.manufacturerId) where.manufacturerId = query.manufacturerId;
   if (query.qualityId) where.qualityId = query.qualityId;
   return where;
+}
+
+async function getSelectedReportParty(query, reportType, userId) {
+  const isManufacturerReport = reportType === "manufacturer";
+  const partyId = isManufacturerReport ? query.manufacturerId : query.customerId;
+  if (!partyId) {
+    return null;
+  }
+
+  const where = { id: partyId, userId };
+  const select = {
+    firmName: true,
+    name: true,
+  };
+
+  return isManufacturerReport
+    ? prisma.manufacturer.findFirst({ where, select })
+    : prisma.customer.findFirst({ where, select });
 }
 
 function getOrderInclude() {
@@ -497,6 +519,11 @@ async function exportReportByType(req, res, reportType) {
   }
 
   const orders = await fetchOrders(where);
+  const selectedParty = await getSelectedReportParty(
+    req.query,
+    reportType,
+    req.user.userId
+  );
 
   const fileName =
     reportType === "manufacturer"
@@ -525,7 +552,16 @@ async function exportReportByType(req, res, reportType) {
       bold: true,
       height: 24,
     },
-  ];
+    selectedParty
+      ? {
+          value: `${reportType === "manufacturer" ? "Manufacturer" : "Customer"} Name : ${getPartyDisplayName(selectedParty) || "-"}`,
+          alignment: "center",
+          fontSize: 13,
+          bold: true,
+          height: 22,
+        }
+      : null,
+  ].filter(Boolean);
 
   await sendWorkbook(res, fileName, [
     {
