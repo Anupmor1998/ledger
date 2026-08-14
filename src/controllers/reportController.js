@@ -25,6 +25,7 @@ const REPORT_USER_TYPE = {
 };
 
 const REPORT_GROUP_BY = {
+  DATE: "DATE",
   CUSTOMER: "CUSTOMER",
   MANUFACTURER: "MANUFACTURER",
   QUALITY: "QUALITY",
@@ -108,12 +109,12 @@ function normalizeGroupByFilter(value, reportType) {
     .trim()
     .toUpperCase();
   if (!normalized) {
-    return REPORT_GROUP_BY.QUALITY;
+    return REPORT_GROUP_BY.DATE;
   }
 
   if (!Object.values(REPORT_GROUP_BY).includes(normalized)) {
     throw new AppError(
-      "groupBy must be one of: customer, manufacturer, quality",
+      "groupBy must be one of: date, customer, manufacturer, quality",
       400
     );
   }
@@ -275,6 +276,9 @@ function orderToReportRow(order, reportType) {
 }
 
 function getGroupValue(order, groupBy) {
+  if (groupBy === REPORT_GROUP_BY.DATE) {
+    return null;
+  }
   if (groupBy === REPORT_GROUP_BY.QUALITY) {
     return order.quality;
   }
@@ -285,6 +289,9 @@ function getGroupValue(order, groupBy) {
 }
 
 function getGroupDisplayName(groupValue, groupBy) {
+  if (groupBy === REPORT_GROUP_BY.DATE) {
+    return "Date";
+  }
   if (groupBy === REPORT_GROUP_BY.QUALITY) {
     return String(groupValue?.name || "").trim() || "UNKNOWN";
   }
@@ -315,43 +322,109 @@ function sortReportOrders(orders) {
   });
 }
 
-function buildReportSections(orders, reportType, groupBy) {
+function isSpecificScope(query, reportType) {
+  if (reportType === "manufacturer") {
+    return Boolean(String(query.manufacturerId || "").trim());
+  }
+  return Boolean(String(query.customerId || "").trim());
+}
+
+function getScopeParty(order, reportType) {
+  return reportType === "manufacturer" ? order.manufacturer : order.customer;
+}
+
+function getScopePartyLabel(reportType) {
+  return reportType === "manufacturer" ? "Manufacturer" : "Customer";
+}
+
+function getScopeHeaderLines(party, reportType) {
+  const partyLabel = getScopePartyLabel(reportType);
+  const name = String(party?.firmName || party?.name || "-").trim() || "-";
+  return [
+    {
+      value: `${partyLabel} Name : ${name}`,
+      alignment: "left",
+      fontSize: 11,
+      bold: true,
+      height: 20,
+    },
+    {
+      value: `Address   : ${String(party?.address || "-").trim() || "-"}`,
+      alignment: "left",
+      fontSize: 11,
+      bold: true,
+      height: 20,
+    },
+    {
+      value: `Mobile    : ${String(party?.phone || "-").trim() || "-"}`,
+      alignment: "left",
+      fontSize: 11,
+      bold: true,
+      height: 20,
+    },
+  ];
+}
+
+function getScopeSortLabel(scopeParty, reportType) {
+  const label =
+    reportType === "manufacturer" ? "Manufacturer" : "Customer";
+  return String(
+    scopeParty?.firmName || scopeParty?.name || `${label}: UNKNOWN`
+  ).trim();
+}
+
+function buildReportSections(orders, reportType, groupBy, query) {
   const groupMap = new Map();
+  const specificScope = isSpecificScope(query, reportType);
+
+  if (specificScope) {
+    return [
+      {
+        showHeader: false,
+        rows: sortReportOrders(orders).map((order) => orderToReportRow(order, reportType)),
+      },
+    ];
+  }
 
   orders.forEach((order) => {
-    const groupValue = getGroupValue(order, groupBy);
-    const partyKey =
-      groupValue?.id ||
-      `${String(groupValue?.firmName || groupValue?.name || "")
+    const scopeParty = getScopeParty(order, reportType);
+    const scopeKey =
+      scopeParty?.id ||
+      `${String(scopeParty?.firmName || scopeParty?.name || "")
         .trim()
-        .toLowerCase()}::${String(groupValue?.name || "")
+        .toLowerCase()}::${String(scopeParty?.phone || "")
         .trim()
         .toLowerCase()}` ||
       "unknown";
 
-    if (!groupMap.has(partyKey)) {
-      groupMap.set(partyKey, {
-        groupValue,
+    if (!groupMap.has(scopeKey)) {
+      groupMap.set(scopeKey, {
+        scopeParty,
         orders: [],
       });
     }
 
-    groupMap.get(partyKey).orders.push(order);
+    groupMap.get(scopeKey).orders.push(order);
   });
 
-  return [...groupMap.values()]
-    .sort((left, right) =>
-      getGroupDisplayName(left.groupValue, groupBy).localeCompare(
-        getGroupDisplayName(right.groupValue, groupBy),
+  const sortedScopes = [...groupMap.values()].sort((left, right) =>
+    getScopeSortLabel(left.scopeParty, reportType)
+      .localeCompare(
+        getScopeSortLabel(right.scopeParty, reportType),
         undefined,
         { sensitivity: "base" }
       )
-    )
-    .map((group) => {
-      const sortedGroupOrders = sortReportOrders(group.orders);
-      return {
-        showHeader: false,
-        rows: sortedGroupOrders.map((order) => orderToReportRow(order, reportType)),
+  );
+
+  const sections = [];
+
+  sortedScopes.forEach((scopeGroup) => {
+    const sortedScopeOrders = sortReportOrders(scopeGroup.orders);
+
+    if (groupBy === REPORT_GROUP_BY.DATE) {
+      sections.push({
+        headerLines: getScopeHeaderLines(scopeGroup.scopeParty, reportType),
+        rows: sortedScopeOrders.map((order) => orderToReportRow(order, reportType)),
         footerLines: [
           {
             value: "=========================",
@@ -361,17 +434,63 @@ function buildReportSections(orders, reportType, groupBy) {
             height: 18,
           },
         ],
-      };
+      });
+      return;
+    }
+
+    const innerMap = new Map();
+    sortedScopeOrders.forEach((order) => {
+      const groupValue = getGroupValue(order, groupBy);
+      const innerKey =
+        groupValue?.id ||
+        `${String(groupValue?.firmName || groupValue?.name || "")
+          .trim()
+          .toLowerCase()}::${String(groupValue?.name || "")
+          .trim()
+          .toLowerCase()}` ||
+        "unknown";
+
+      if (!innerMap.has(innerKey)) {
+        innerMap.set(innerKey, {
+          groupValue,
+          orders: [],
+        });
+      }
+
+      innerMap.get(innerKey).orders.push(order);
     });
+
+    const sortedInnerGroups = [...innerMap.values()].sort((left, right) =>
+      getGroupDisplayName(left.groupValue, groupBy).localeCompare(
+        getGroupDisplayName(right.groupValue, groupBy),
+        undefined,
+        { sensitivity: "base" }
+      )
+    );
+
+    sortedInnerGroups.forEach((innerGroup, index) => {
+      sections.push({
+        headerLines: index === 0 ? getScopeHeaderLines(scopeGroup.scopeParty, reportType) : [],
+        rows: sortReportOrders(innerGroup.orders).map((order) => orderToReportRow(order, reportType)),
+        footerLines: [
+          {
+            value: "=========================",
+            alignment: "center",
+            fontSize: 11,
+            bold: true,
+            height: 18,
+          },
+        ],
+      });
+    });
+  });
+
+  return sections;
 }
 
 async function exportReportByType(req, res, reportType) {
   const status = normalizeStatusFilter(req.query.status);
   const groupBy = normalizeGroupByFilter(req.query.groupBy, reportType);
-  const userType =
-      reportType === "manufacturer"
-      ? REPORT_USER_TYPE.MANUFACTURER
-      : REPORT_USER_TYPE.CUSTOMER;
   const where = await getOrderFilters(req.query, req.user.userId);
   if (status) {
     where.status = status;
@@ -412,7 +531,7 @@ async function exportReportByType(req, res, reportType) {
     {
       headerLines,
       columns: sheetColumns,
-      sections: buildReportSections(orders, reportType, groupBy),
+      sections: buildReportSections(orders, reportType, groupBy, req.query),
     },
   ]);
 }
