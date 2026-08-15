@@ -641,7 +641,7 @@ const createOrder = asyncHandler(async (req, res) => {
             quantityUnit: amountData.quantityUnit,
             lotMeters: amountData.lotMeters,
             meter: amountData.meter,
-            commissionAmount: amountData.commissionAmount,
+            commissionAmount: 0,
             remarks: remarks?.trim() || null,
             customerRemark: customerRemark?.trim() || null,
             manufacturerRemark: manufacturerRemark?.trim() || null,
@@ -1262,16 +1262,26 @@ const updateOrder = asyncHandler(async (req, res) => {
           where: { id, userId },
           select: {
             id: true,
+            customerId: true,
             manufacturerId: true,
+            rate: true,
             quantity: true,
             quantityUnit: true,
             lotMeters: true,
+            meter: true,
             processedQuantity: true,
             processedMeter: true,
             deliveryDateFrom: true,
             deliveryDateTo: true,
             status: true,
             fyStartYear: true,
+            customer: {
+              select: {
+                commissionBase: true,
+                commissionPercent: true,
+                commissionLotRate: true,
+              },
+            },
           },
         });
         if (!existing) {
@@ -1383,6 +1393,7 @@ const updateOrder = asyncHandler(async (req, res) => {
               quantity: true,
               quantityUnit: true,
               lotMeters: true,
+              meter: true,
               customer: {
                 select: {
                   commissionBase: true,
@@ -1408,7 +1419,6 @@ const updateOrder = asyncHandler(async (req, res) => {
           updateData.quantityUnit = amountData.quantityUnit;
           updateData.lotMeters = amountData.lotMeters;
           updateData.meter = amountData.meter;
-          updateData.commissionAmount = amountData.commissionAmount;
         }
 
         const effectiveQuantityUnit = updateData.quantityUnit || existing.quantityUnit;
@@ -1519,54 +1529,23 @@ const updateOrder = asyncHandler(async (req, res) => {
                 );
         }
 
-        const shouldFinalizeCommission =
-          updateData.status === ORDER_STATUS.COMPLETED ||
-          (processedQuantity !== undefined && existing.status === ORDER_STATUS.COMPLETED);
-        const shouldFinalizeCommissionFromAdd =
-          processedQuantityAdd !== undefined && existing.status === ORDER_STATUS.COMPLETED;
-        if (shouldFinalizeCommission || shouldFinalizeCommissionFromAdd) {
-          const orderSnapshot = await tx.order.findFirst({
-            where: { id, userId },
-            select: {
-              quantity: true,
-              meter: true,
-              processedQuantity: true,
-              processedMeter: true,
-              commissionAmount: true,
-            },
-          });
-          if (!orderSnapshot) {
-            throw new AppError("order not found", 404);
-          }
-          const finalProcessedQuantity = Number(
-            updateData.processedQuantity !== undefined
-              ? updateData.processedQuantity
-              : orderSnapshot.processedQuantity
-          );
-          const finalProcessedMeter = Number(
-            updateData.processedMeter !== undefined
-              ? updateData.processedMeter
-              : orderSnapshot.processedMeter
-          );
-          const effectiveTotalQuantity = Number(
-            updateData.quantity !== undefined ? updateData.quantity : orderSnapshot.quantity
-          );
-          const effectiveTotalMeter = Number(
-            updateData.meter !== undefined ? updateData.meter : orderSnapshot.meter
-          );
-          const fullCommissionAmount = Number(
-            updateData.commissionAmount !== undefined
-              ? updateData.commissionAmount
-              : orderSnapshot.commissionAmount
-          );
-
-          updateData.commissionAmount = computeProportionalCommissionAmount({
-            processedQuantity: finalProcessedQuantity,
-            totalQuantity: effectiveTotalQuantity,
-            processedMeter: finalProcessedMeter,
-            totalMeter: effectiveTotalMeter,
-            fullCommissionAmount,
-          });
+        const shouldRefreshLiveCommission =
+          rate !== undefined ||
+          quantity !== undefined ||
+          quantityUnit !== undefined ||
+          lotMeters !== undefined ||
+          customerId !== undefined ||
+          processedQuantity !== undefined ||
+          processedMeter !== undefined ||
+          processedQuantityAdd !== undefined ||
+          updateData.status === ORDER_STATUS.COMPLETED;
+        if (shouldRefreshLiveCommission) {
+          const commissionSourceOrder = {
+            ...existing,
+            ...updateData,
+            customer: customerForCommission || existing.customer,
+          };
+          updateData.commissionAmount = computeLiveProgressCommissionAmount(commissionSourceOrder);
         }
 
         const updatedOrder = await tx.order.update({
