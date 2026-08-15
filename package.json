@@ -16,7 +16,8 @@
     "db:backup-local": "node scripts/backup-to-local.js",
     "audit:commissions": "node scripts/audit-commissions.js",
     "fix:commission-rounding": "node scripts/fix-commission-rounding.js",
-    "repair:commission-live": "node scripts/repair-commission-live.js"
+    "repair:commission-live": "node scripts/repair-commission-live.js",
+    "repair:meter-lot-fields": "node scripts/fill-meter-lot-fields.js"
   },
   "keywords": [],
   "author": "",

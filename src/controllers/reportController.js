@@ -163,7 +163,23 @@ function getPartyDisplayName(party) {
 }
 
 function computeLotValue(order) {
-  return round2(safeNumber(order.quantity));
+  if (order.lot !== null && order.lot !== undefined && order.lot !== "") {
+    return Math.round(safeNumber(order.lot));
+  }
+  const quantity = safeNumber(order.quantity);
+  const unit = String(order.quantityUnit || "").toUpperCase();
+  const lotMeters = safeNumber(order.lotMeters);
+
+  if (unit === "LOT") {
+    return Math.round(quantity);
+  }
+  if (unit === "TAKKA") {
+    return Math.round(quantity / 12);
+  }
+  if (unit === "METER" && lotMeters > 0) {
+    return Math.round(quantity / lotMeters);
+  }
+  return "";
 }
 
 function computeMeterValue(order) {
@@ -262,8 +278,8 @@ function orderToReportRow(order, reportType) {
     amount: roundCurrency(order.commissionAmount ?? 0),
     lot: computeLotValue(order),
     quality: order.quality?.name || "",
-    meter: computeMeterValue(order),
-    rate: round2(order.rate),
+    meter: computeMeterValue(order).toFixed(2),
+    rate: round2(order.rate).toFixed(2),
     orderId: order.orderNo,
     date: formatCellDate(order.orderDate),
     partyFirmName: party?.firmName || "",

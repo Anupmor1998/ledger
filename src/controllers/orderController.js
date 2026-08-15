@@ -34,7 +34,7 @@ function normalizeOrder(order) {
     ...order,
     processedQuantity,
     processedMeter,
-    rate: Number(order.rate),
+    rate: round2(order.rate),
     lotMeters: order.lotMeters === null ? null : Number(order.lotMeters),
     meter: order.meter === null ? null : Number(order.meter),
     commissionAmount: normalizedCommissionAmount,
@@ -305,6 +305,33 @@ function toLotQuantity({ quantity, quantityUnit, lotMeters }) {
   return quantity / lotMeters;
 }
 
+function computeStoredLotValue({ quantity, quantityUnit, lotMeters }) {
+  const normalizedQuantity = Number(quantity || 0);
+  const normalizedUnit = String(quantityUnit || "").toUpperCase();
+  const normalizedLotMeters = Number(lotMeters || 0);
+
+  if (!Number.isFinite(normalizedQuantity) || normalizedQuantity <= 0) {
+    return null;
+  }
+
+  if (normalizedUnit === QUANTITY_UNITS.LOT) {
+    return Math.round(normalizedQuantity);
+  }
+
+  if (normalizedUnit === QUANTITY_UNITS.TAKKA) {
+    return Math.round(normalizedQuantity / TAKKA_PER_LOT);
+  }
+
+  if (normalizedUnit === QUANTITY_UNITS.METER) {
+    if (!Number.isFinite(normalizedLotMeters) || normalizedLotMeters <= 0) {
+      return null;
+    }
+    return Math.round(normalizedQuantity / normalizedLotMeters);
+  }
+
+  return null;
+}
+
 function computeCommissionAmount({
   quantityForCommission,
   rate,
@@ -354,7 +381,9 @@ function computeOrderAmounts(
     : QUANTITY_UNITS.TAKKA;
 
   const parsedExistingLotMeters = Number(existingLotMeters);
-  const shouldUseLotMeters = needsLotMetersBasis(normalizedUnit, customerCommissionConfig);
+  const shouldUseLotMeters =
+    needsLotMetersBasis(normalizedUnit, customerCommissionConfig) ||
+    normalizedUnit === QUANTITY_UNITS.METER;
   const lotMeters = shouldUseLotMeters
     ? Number.isFinite(parsedExistingLotMeters) && parsedExistingLotMeters > 0
       ? parsedExistingLotMeters
@@ -365,6 +394,11 @@ function computeOrderAmounts(
     normalizedUnit === QUANTITY_UNITS.METER
       ? quantity
       : toMeterFromQuantity({ quantity, quantityUnit: normalizedUnit, lotMeters });
+  const lot = computeStoredLotValue({
+    quantity,
+    quantityUnit: normalizedUnit,
+    lotMeters,
+  });
   const commissionAmount = computeCommissionAmount({
     quantityForCommission: quantity,
     rate,
@@ -376,6 +410,7 @@ function computeOrderAmounts(
   return {
     quantityUnit: normalizedUnit,
     lotMeters: lotMeters === null ? null : round2(lotMeters),
+    lot,
     meter: round2(meter),
     commissionAmount: roundCurrency(commissionAmount),
   };
@@ -633,13 +668,14 @@ const createOrder = asyncHandler(async (req, res) => {
             customerId,
             manufacturerId,
             qualityId,
-            rate,
+            rate: round2(Number(rate)),
             quantity: Number(quantity),
             processedQuantity: 0,
             processedMeter: 0,
             status: ORDER_STATUS.PENDING,
             quantityUnit: amountData.quantityUnit,
             lotMeters: amountData.lotMeters,
+            lot: amountData.lot,
             meter: amountData.meter,
             commissionAmount: 0,
             remarks: remarks?.trim() || null,
@@ -1325,7 +1361,7 @@ const updateOrder = asyncHandler(async (req, res) => {
           });
         }
         if (rate !== undefined) {
-          updateData.rate = rate;
+          updateData.rate = round2(Number(rate));
         }
         if (quantity !== undefined) {
           updateData.quantity = Number(quantity);
@@ -1418,6 +1454,7 @@ const updateOrder = asyncHandler(async (req, res) => {
           );
           updateData.quantityUnit = amountData.quantityUnit;
           updateData.lotMeters = amountData.lotMeters;
+          updateData.lot = amountData.lot;
           updateData.meter = amountData.meter;
         }
 

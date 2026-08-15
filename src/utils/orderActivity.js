@@ -13,6 +13,7 @@ const AUDIT_FIELDS = [
   "status",
   "rate",
   "quantity",
+  "lot",
   "processedQuantity",
   "processedMeter",
   "quantityUnit",
