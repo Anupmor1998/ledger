@@ -163,37 +163,11 @@ function getPartyDisplayName(party) {
 }
 
 function computeLotValue(order) {
-  const quantity = safeNumber(order.quantity);
-  const unit = String(order.quantityUnit || "").toUpperCase();
-  const lotMeters = safeNumber(order.lotMeters);
-
-  if (unit === "LOT") {
-    return round2(quantity);
-  }
-  if (unit === "TAKKA") {
-    return round2(quantity / 12);
-  }
-  if (unit === "METER" && lotMeters > 0) {
-    return round2(quantity / lotMeters);
-  }
-  return "";
+  return round2(safeNumber(order.quantity));
 }
 
 function computeMeterValue(order) {
-  const quantity = safeNumber(order.quantity);
-  const unit = String(order.quantityUnit || "").toUpperCase();
-  const lotMeters = safeNumber(order.lotMeters);
-
-  if (unit === "METER") {
-    return round2(quantity);
-  }
-  if (unit === "LOT" && lotMeters > 0) {
-    return round2(quantity * lotMeters);
-  }
-  if (unit === "TAKKA" && lotMeters > 0) {
-    return round2(quantity * (lotMeters / 12));
-  }
-  return "";
+  return round2(safeNumber(order.processedMeter));
 }
 
 async function getSelectedFinancialYearStartForUser(userId) {
