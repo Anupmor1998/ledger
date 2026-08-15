@@ -15,7 +15,8 @@
     "db:sync-local": "node scripts/sync-prod-to-local.js",
     "db:backup-local": "node scripts/backup-to-local.js",
     "audit:commissions": "node scripts/audit-commissions.js",
-    "fix:commission-rounding": "node scripts/fix-commission-rounding.js"
+    "fix:commission-rounding": "node scripts/fix-commission-rounding.js",
+    "repair:commission-live": "node scripts/repair-commission-live.js"
   },
   "keywords": [],
   "author": "",
