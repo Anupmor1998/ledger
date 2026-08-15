@@ -1622,6 +1622,11 @@ const getOrderActivity = asyncHandler(async (req, res) => {
       orderId: id,
     },
     orderBy: [{ createdAt: "desc" }],
+    include: {
+      user: {
+        select: { id: true, name: true, email: true },
+      },
+    },
   });
 
   return res.json(
@@ -1632,6 +1637,7 @@ const getOrderActivity = asyncHandler(async (req, res) => {
       afterData: activity.afterData,
       metadata: activity.metadata,
       createdAt: activity.createdAt,
+      user: activity.user,
     }))
   );
 });
@@ -1734,6 +1740,9 @@ const listOrderActivities = asyncHandler(async (req, res) => {
     where: { userId },
     orderBy: [{ [sortBy]: sortOrder }],
     include: {
+      user: {
+        select: { id: true, name: true, email: true },
+      },
       order: {
         include: {
           customer: true,
@@ -1770,6 +1779,7 @@ const listOrderActivities = asyncHandler(async (req, res) => {
     afterData: activity.afterData,
     metadata: activity.metadata,
     createdAt: activity.createdAt,
+    user: activity.user,
     order: activity.order,
   }));
 
