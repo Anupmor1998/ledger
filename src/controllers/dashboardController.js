@@ -24,6 +24,27 @@ function formatDayLabel(date) {
   return date.toLocaleString("en-IN", { day: "2-digit", month: "short" });
 }
 
+function computeLotValue(order) {
+  if (order?.lot !== null && order?.lot !== undefined && order?.lot !== "") {
+    return Math.round(Number(order.lot) || 0);
+  }
+
+  const quantity = Number(order?.quantity || 0);
+  const unit = String(order?.quantityUnit || "").toUpperCase();
+  const lotMeters = Number(order?.lotMeters || 0);
+
+  if (unit === "LOT") {
+    return Math.round(quantity);
+  }
+  if (unit === "TAKKA") {
+    return Math.round(quantity / 12);
+  }
+  if (unit === "METER" && lotMeters > 0) {
+    return Math.round(quantity / lotMeters);
+  }
+  return 0;
+}
+
 function getFinancialYearBounds(startYear) {
   const year = Number(startYear);
   if (!Number.isInteger(year)) {
@@ -145,6 +166,10 @@ const getDashboardSummary = require("../utils/asyncHandler")(async (req, res) =>
       orderDate: true,
       status: true,
       commissionAmount: true,
+      lot: true,
+      quantity: true,
+      quantityUnit: true,
+      lotMeters: true,
     },
   });
 
@@ -154,6 +179,7 @@ const getDashboardSummary = require("../utils/asyncHandler")(async (req, res) =>
   let pendingCommissionAmount = 0;
   let completedCommissionAmount = 0;
   let cancelledCommissionAmount = 0;
+  let totalLotInFinancialYear = 0;
 
   fyOrders.forEach((order) => {
     const orderDate = new Date(order.orderDate);
@@ -161,13 +187,15 @@ const getDashboardSummary = require("../utils/asyncHandler")(async (req, res) =>
     const monthlyKey = formatMonthKey(orderDate);
     const status = String(order.status || "").toUpperCase();
     const commissionAmount = Number(order.commissionAmount || 0);
+    const lotValue = computeLotValue(order);
 
     if (dailyCounts.has(dailyKey)) {
-      dailyCounts.get(dailyKey).value += 1;
+      dailyCounts.get(dailyKey).value += lotValue;
     }
     if (monthlyCounts.has(monthlyKey)) {
-      monthlyCounts.get(monthlyKey).value += 1;
+      monthlyCounts.get(monthlyKey).value += lotValue;
     }
+    totalLotInFinancialYear += lotValue;
 
     if (status === "PENDING") {
       pendingOrderCount += 1;
@@ -181,11 +209,25 @@ const getDashboardSummary = require("../utils/asyncHandler")(async (req, res) =>
     }
   });
 
-  const totalCommissionAmount = pendingCommissionAmount + completedCommissionAmount + cancelledCommissionAmount;
+  const pendingCommissionSummary = await prisma.pendingPayment.aggregate({
+    where: {
+      userId: req.user.userId,
+      fyStartYear: selectedFinancialYearStart,
+      balanceAmount: {
+        gt: 0,
+      },
+    },
+    _sum: {
+      balanceAmount: true,
+    },
+  });
+
+  const openPendingCommissionAmount = Number(pendingCommissionSummary._sum.balanceAmount || 0);
+  const totalCommissionAmount =
+    openPendingCommissionAmount + completedCommissionAmount + cancelledCommissionAmount;
 
   const yearlyStart = Math.max(selectedFinancialYearStart - 4, getFinancialYearStartYear());
-  const yearlyCounts = await prisma.order.groupBy({
-    by: ["fyStartYear"],
+  const yearlyOrdersSource = await prisma.order.findMany({
     where: {
       userId: req.user.userId,
       fyStartYear: {
@@ -193,17 +235,27 @@ const getDashboardSummary = require("../utils/asyncHandler")(async (req, res) =>
         lte: selectedFinancialYearStart,
       },
     },
-    _count: {
-      _all: true,
-    },
-    orderBy: {
-      fyStartYear: "asc",
+    select: {
+      fyStartYear: true,
+      lot: true,
+      quantity: true,
+      quantityUnit: true,
+      lotMeters: true,
     },
   });
 
-  const yearlyMap = new Map(
-    yearlyCounts.map((row) => [row.fyStartYear, row._count._all])
-  );
+  const yearlyMap = new Map();
+  for (let fy = yearlyStart; fy <= selectedFinancialYearStart; fy += 1) {
+    yearlyMap.set(fy, 0);
+  }
+
+  yearlyOrdersSource.forEach((order) => {
+    const fy = Number(order.fyStartYear);
+    if (!yearlyMap.has(fy)) {
+      return;
+    }
+    yearlyMap.set(fy, yearlyMap.get(fy) + computeLotValue(order));
+  });
   const yearlyOrders = [];
   for (let fy = yearlyStart; fy <= selectedFinancialYearStart; fy += 1) {
     yearlyOrders.push({
@@ -221,16 +273,19 @@ const getDashboardSummary = require("../utils/asyncHandler")(async (req, res) =>
       label: getFinancialYearLabel(fy),
     })),
     totalOrdersInFinancialYear: fyOrders.length,
+    totalLotInFinancialYear,
     pendingOrderCount,
     completedOrderCount,
     cancelledOrderCount,
-    pendingCommissionAmount: Math.round(pendingCommissionAmount),
+    pendingCommissionAmount: Math.round(openPendingCommissionAmount),
     completedCommissionAmount: Math.round(completedCommissionAmount),
     cancelledCommissionAmount: Math.round(cancelledCommissionAmount),
     totalCommissionAmount: Math.round(totalCommissionAmount),
+    dailyLots: dailyBuckets,
+    monthlyLots: monthlyBuckets,
+    yearlyOrders,
     dailyOrders: dailyBuckets,
     monthlyOrders: monthlyBuckets,
-    yearlyOrders,
   });
 });
 
