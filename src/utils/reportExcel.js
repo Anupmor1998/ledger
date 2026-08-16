@@ -50,6 +50,15 @@ function writeTableHeaderRow(worksheet, rowIndex, columns) {
   });
 }
 
+function styleDataCell(cell, options = {}) {
+  const bold = options.bold ?? false;
+  cell.font = { name: "Courier New", size: 11, bold };
+  cell.alignment = { horizontal: "left", vertical: "middle" };
+  if (options.highlight) {
+    cell.fill = META_FILL;
+  }
+}
+
 function addSheet(workbook, sheetConfig) {
   const worksheet = workbook.addWorksheet(sheetConfig.name);
   const columns = Array.isArray(sheetConfig.columns) ? sheetConfig.columns : [];
@@ -101,11 +110,17 @@ function addSheet(workbook, sheetConfig) {
 
       sectionRows.forEach((row) => {
         const dataRow = worksheet.getRow(currentRow);
+        const isHighlightedRow = Boolean(row?.__highlight);
         sectionColumns.forEach((col, index) => {
           dataRow.getCell(index + 1).value = row?.[col.key] ?? "";
-          dataRow.getCell(index + 1).font = { name: "Courier New", size: 11 };
-          dataRow.getCell(index + 1).alignment = { horizontal: "left", vertical: "middle" };
+          styleDataCell(dataRow.getCell(index + 1), {
+            bold: isHighlightedRow,
+            highlight: isHighlightedRow,
+          });
         });
+        if (isHighlightedRow) {
+          dataRow.height = 20;
+        }
         currentRow += 1;
       });
 
@@ -117,11 +132,17 @@ function addSheet(workbook, sheetConfig) {
   } else {
     rows.forEach((row) => {
       const dataRow = worksheet.getRow(currentRow);
+      const isHighlightedRow = Boolean(row?.__highlight);
       columns.forEach((col, index) => {
         dataRow.getCell(index + 1).value = row?.[col.key] ?? "";
-        dataRow.getCell(index + 1).font = { name: "Courier New", size: 11 };
-        dataRow.getCell(index + 1).alignment = { horizontal: "left", vertical: "middle" };
+        styleDataCell(dataRow.getCell(index + 1), {
+          bold: isHighlightedRow,
+          highlight: isHighlightedRow,
+        });
       });
+      if (isHighlightedRow) {
+        dataRow.height = 20;
+      }
       currentRow += 1;
     });
   }

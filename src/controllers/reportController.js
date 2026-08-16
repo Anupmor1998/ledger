@@ -1,6 +1,7 @@
 const prisma = require("../config/prisma");
 const asyncHandler = require("../utils/asyncHandler");
 const { sendWorkbook } = require("../utils/reportExcel");
+const { sendPdfReport } = require("../utils/reportPdf");
 const {
   getFinancialYearStartYear,
   getFinancialYearLabel,
@@ -222,6 +223,8 @@ async function getSelectedReportParty(query, reportType, userId) {
   const select = {
     firmName: true,
     name: true,
+    address: true,
+    phone: true,
   };
 
   return isManufacturerReport
@@ -285,6 +288,20 @@ function orderToReportRow(order, reportType) {
     partyFirmName: party?.firmName || "",
     partyName: party?.name || "",
   };
+}
+
+function computeReportTotals(orders) {
+  return orders.reduce(
+    (totals, order) => {
+      totals.amount += roundCurrency(order.commissionAmount ?? 0);
+      totals.lot += Number(computeLotValue(order) || 0);
+      return totals;
+    },
+    {
+      amount: 0,
+      lot: 0,
+    }
+  );
 }
 
 function getGroupValue(order, groupBy) {
@@ -377,6 +394,49 @@ function getScopeHeaderLines(party, reportType) {
   ];
 }
 
+function getSelectedPartyHeaderLines(party, reportType) {
+  const partyLabel = getScopePartyLabel(reportType);
+  const name = String(party?.firmName || party?.name || "-").trim() || "-";
+  return [
+    {
+      value: `${partyLabel} Name : ${name}`,
+      alignment: "left",
+      fontSize: 14,
+      bold: true,
+      height: 24,
+    },
+    {
+      value: `Address   : ${String(party?.address || "-").trim() || "-"}`,
+      alignment: "left",
+      fontSize: 14,
+      bold: true,
+      height: 24,
+    },
+    {
+      value: `Phone     : ${String(party?.phone || "-").trim() || "-"}`,
+      alignment: "left",
+      fontSize: 14,
+      bold: true,
+      height: 24,
+    },
+  ];
+}
+
+function buildFinalTotalRow(finalTotals) {
+  return {
+    __highlight: true,
+    amount: finalTotals.amount,
+    lot: finalTotals.lot,
+    quality: "",
+    meter: "",
+    rate: "",
+    orderId: "",
+    date: "",
+    partyFirmName: "",
+    partyName: "",
+  };
+}
+
 function getScopeSortLabel(scopeParty, reportType) {
   const label =
     reportType === "manufacturer" ? "Manufacturer" : "Customer";
@@ -388,14 +448,20 @@ function getScopeSortLabel(scopeParty, reportType) {
 function buildReportSections(orders, reportType, groupBy, query) {
   const groupMap = new Map();
   const specificScope = isSpecificScope(query, reportType);
+  const finalTotals = computeReportTotals(orders);
 
   if (specificScope) {
-    return [
+    const sections = [
       {
         showHeader: false,
         rows: sortReportOrders(orders).map((order) => orderToReportRow(order, reportType)),
       },
     ];
+    sections.push({
+      showHeader: false,
+      rows: [buildFinalTotalRow(finalTotals)],
+    });
+    return sections;
   }
 
   orders.forEach((order) => {
@@ -497,10 +563,16 @@ function buildReportSections(orders, reportType, groupBy, query) {
     });
   });
 
+  sections.push({
+    showHeader: false,
+    rows: [buildFinalTotalRow(finalTotals)],
+  });
+
   return sections;
 }
 
-async function exportReportByType(req, res, reportType) {
+async function exportReportByType(req, res, reportType, format = "xlsx") {
+  const normalizedFormat = String(format || "xlsx").toLowerCase();
   const status = normalizeStatusFilter(req.query.status);
   const groupBy = normalizeGroupByFilter(req.query.groupBy, reportType);
   const where = await getOrderFilters(req.query, req.user.userId);
@@ -515,10 +587,8 @@ async function exportReportByType(req, res, reportType) {
     req.user.userId
   );
 
-  const fileName =
-    reportType === "manufacturer"
-      ? "manufacturer-report.xlsx"
-      : "customer-report.xlsx";
+  const baseFileName = reportType === "manufacturer" ? "manufacturer-report" : "customer-report";
+  const fileName = `${baseFileName}.${normalizedFormat === "pdf" ? "pdf" : "xlsx"}`;
   const sheetColumns = buildReportColumns(reportType);
   const headerLines = [
     {
@@ -542,47 +612,58 @@ async function exportReportByType(req, res, reportType) {
       bold: true,
       height: 24,
     },
-    selectedParty
-      ? {
-          value: `${reportType === "manufacturer" ? "Manufacturer" : "Customer"} Name : ${getPartyDisplayName(selectedParty) || "-"}`,
-          alignment: "center",
-          fontSize: 13,
-          bold: true,
-          height: 22,
-        }
-      : null,
+    ...(selectedParty ? getSelectedPartyHeaderLines(selectedParty, reportType) : []),
   ].filter(Boolean);
 
-  await sendWorkbook(res, fileName, [
-    {
-      headerLines,
-      columns: sheetColumns,
-      sections: buildReportSections(orders, reportType, groupBy, req.query),
-    },
-  ]);
+  const sheetConfig = {
+    headerLines,
+    columns: sheetColumns,
+    sections: buildReportSections(orders, reportType, groupBy, req.query),
+  };
+
+  if (normalizedFormat === "pdf") {
+    await sendPdfReport(res, fileName, [sheetConfig]);
+    return;
+  }
+
+  await sendWorkbook(res, fileName, [sheetConfig]);
 }
 
 const exportOrderReport = asyncHandler(async (req, res) => {
   const userType = normalizeUserTypeFilter(req.query.userType);
   const reportType =
     userType === REPORT_USER_TYPE.MANUFACTURER ? "manufacturer" : "customer";
-  const fileName =
-    reportType === "manufacturer"
-      ? "manufacturer-report.xlsx"
-      : "customer-report.xlsx";
-  await exportReportByType(req, res, reportType);
+  await exportReportByType(req, res, reportType, "xlsx");
 });
 
 const exportCustomerReport = asyncHandler(async (req, res) => {
-  await exportReportByType(req, res, "customer");
+  await exportReportByType(req, res, "customer", "xlsx");
 });
 
 const exportManufacturerReport = asyncHandler(async (req, res) => {
-  await exportReportByType(req, res, "manufacturer");
+  await exportReportByType(req, res, "manufacturer", "xlsx");
+});
+
+const exportOrderReportPdf = asyncHandler(async (req, res) => {
+  const userType = normalizeUserTypeFilter(req.query.userType);
+  const reportType =
+    userType === REPORT_USER_TYPE.MANUFACTURER ? "manufacturer" : "customer";
+  await exportReportByType(req, res, reportType, "pdf");
+});
+
+const exportCustomerReportPdf = asyncHandler(async (req, res) => {
+  await exportReportByType(req, res, "customer", "pdf");
+});
+
+const exportManufacturerReportPdf = asyncHandler(async (req, res) => {
+  await exportReportByType(req, res, "manufacturer", "pdf");
 });
 
 module.exports = {
   exportOrderReport,
   exportCustomerReport,
   exportManufacturerReport,
+  exportOrderReportPdf,
+  exportCustomerReportPdf,
+  exportManufacturerReportPdf,
 };
