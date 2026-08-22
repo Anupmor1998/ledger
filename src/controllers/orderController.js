@@ -152,7 +152,10 @@ function resolveOrderActivityAction(beforeStatus, afterStatus, updateData) {
   if (normalizedAfter === ORDER_STATUS.COMPLETED && normalizedBefore !== ORDER_STATUS.COMPLETED) {
     return ORDER_ACTIVITY_ACTIONS.COMPLETED;
   }
-  if (normalizedAfter === ORDER_STATUS.PENDING && normalizedBefore === ORDER_STATUS.COMPLETED) {
+  if (
+    normalizedAfter === ORDER_STATUS.PENDING &&
+    (normalizedBefore === ORDER_STATUS.COMPLETED || normalizedBefore === ORDER_STATUS.CANCELLED)
+  ) {
     return ORDER_ACTIVITY_ACTIONS.REOPENED;
   }
   if (normalizedAfter === ORDER_STATUS.CANCELLED) {
