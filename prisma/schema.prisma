@@ -11,6 +11,7 @@ model User {
   email               String               @unique
   name                String?
   password            String
+  role                UserRole             @default(USER)
   theme               String               @default("light")
   selectedFinancialYearStart Int?
   createdAt           DateTime             @default(now())
@@ -27,6 +28,7 @@ model User {
   whatsappGroups      WhatsAppGroup[]
   yearTransferBatches YearTransferBatch[]
   passwordResetTokens PasswordResetToken[]
+  adminActionLogs     AdminActionLog[]
 }
 
 model PasswordResetToken {
@@ -222,6 +224,11 @@ enum CommissionBase {
   LOT
 }
 
+enum UserRole {
+  USER
+  ADMIN
+}
+
 enum OrderStatus {
   PENDING
   COMPLETED
@@ -299,4 +306,22 @@ model YearTransferBatch {
   @@index([userId])
   @@index([userId, sourceFyStartYear])
   @@index([userId, targetFyStartYear])
+}
+
+model AdminActionLog {
+  id            String   @id @default(uuid())
+  userId        String
+  action        String
+  collectionKey String
+  recordId      String?
+  beforeData    Json?
+  afterData     Json?
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  user          User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@index([collectionKey])
+  @@index([action])
+  @@index([createdAt])
 }

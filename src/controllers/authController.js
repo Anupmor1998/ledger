@@ -11,6 +11,18 @@ const { getFinancialYearStartYear } = require("../utils/financialYear");
 
 const SALT_ROUNDS = 10;
 
+function buildSessionUser(user) {
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    theme: user.theme,
+    selectedFinancialYearStart: user.selectedFinancialYearStart ?? getFinancialYearStartYear(),
+    createdAt: user.createdAt,
+  };
+}
+
 function buildResetPasswordUrl(token) {
   if (!FRONTEND_URL) {
     return null;
@@ -45,12 +57,14 @@ const signup = asyncHandler(async (req, res) => {
       email,
       name,
       password: passwordHash,
+      role: "USER",
       selectedFinancialYearStart: getFinancialYearStartYear(),
     },
     select: {
       id: true,
       email: true,
       name: true,
+      role: true,
       theme: true,
       selectedFinancialYearStart: true,
       createdAt: true,
@@ -58,7 +72,49 @@ const signup = asyncHandler(async (req, res) => {
   });
 
   const token = createToken(user);
-  return res.status(201).json({ user, token });
+  return res.status(201).json({ user: buildSessionUser(user), token });
+});
+
+const createAdminAccount = asyncHandler(async (req, res) => {
+  const { email, name, password } = req.body || {};
+
+  if (!email || !password) {
+    throw new AppError("email and password are required", 400);
+  }
+
+  if (String(password).length < 8) {
+    throw new AppError("password must be at least 8 characters", 400);
+  }
+
+  const passwordHash = await bcrypt.hash(String(password), SALT_ROUNDS);
+  const normalizedEmail = String(email).trim().toLowerCase();
+  const user = await prisma.user.upsert({
+    where: { email: normalizedEmail },
+    create: {
+      email: normalizedEmail,
+      name: String(name || "").trim() || null,
+      password: passwordHash,
+      role: "ADMIN",
+      selectedFinancialYearStart: getFinancialYearStartYear(),
+    },
+    update: {
+      name: String(name || "").trim() || null,
+      password: passwordHash,
+      role: "ADMIN",
+    },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      role: true,
+      theme: true,
+      selectedFinancialYearStart: true,
+      createdAt: true,
+    },
+  });
+
+  const token = createToken(user);
+  return res.status(201).json({ user: buildSessionUser(user), token });
 });
 
 const login = asyncHandler(async (req, res) => {
@@ -82,15 +138,7 @@ const login = asyncHandler(async (req, res) => {
 
   const token = createToken(user);
   return res.json({
-    user: {
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      theme: user.theme,
-      selectedFinancialYearStart:
-        user.selectedFinancialYearStart ?? getFinancialYearStartYear(),
-      createdAt: user.createdAt,
-    },
+    user: buildSessionUser(user),
     token,
   });
 });
@@ -209,6 +257,7 @@ const resetPassword = asyncHandler(async (req, res) => {
 
 module.exports = {
   signup,
+  createAdminAccount,
   login,
   forgotPassword,
   resetPassword,

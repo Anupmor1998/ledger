@@ -1016,6 +1016,7 @@ const listUsers = asyncHandler(async (req, res) => {
       id: true,
       email: true,
       name: true,
+      role: true,
       theme: true,
       selectedFinancialYearStart: true,
       createdAt: true,
@@ -1030,6 +1031,7 @@ const listUsers = asyncHandler(async (req, res) => {
   return res.json([
     {
       ...user,
+      role: user.role,
       selectedFinancialYearStart:
         user.selectedFinancialYearStart ?? getFinancialYearStartYear(),
     },
@@ -1161,6 +1163,7 @@ const updateMyProfile = asyncHandler(async (req, res) => {
       id: true,
       email: true,
       name: true,
+      role: true,
       theme: true,
       selectedFinancialYearStart: true,
       createdAt: true,
@@ -1170,6 +1173,7 @@ const updateMyProfile = asyncHandler(async (req, res) => {
 
   return res.json({
     ...updated,
+    role: updated.role,
     selectedFinancialYearStart:
       updated.selectedFinancialYearStart ?? getFinancialYearStartYear(),
   });

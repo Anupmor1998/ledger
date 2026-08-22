@@ -2,14 +2,22 @@ require("dotenv").config();
 
 const { Client } = require("pg");
 
+// Explicit allowlist for the ledger app schema only.
 const TABLES = [
   "User",
   "PasswordResetToken",
   "Customer",
   "Manufacturer",
   "Quality",
-  "WhatsAppGroup",
   "Order",
+  "OrderActivity",
+  "PaymentReceipt",
+  "PendingPayment",
+  "PaymentAllocation",
+  "WhatsAppGroup",
+  "RemarkTemplate",
+  "YearTransferBatch",
+  "AdminActionLog",
 ];
 
 const BATCH_SIZE = 100;
@@ -62,6 +70,30 @@ async function getTableColumns(client, tableName) {
   return result.rows.map((row) => row.column_name);
 }
 
+async function getExistingTables(client, tableNames) {
+  if (!tableNames.length) {
+    return [];
+  }
+
+  const result = await client.query(
+    `
+      SELECT table_name
+      FROM information_schema.tables
+      WHERE table_schema = 'public'
+        AND table_type = 'BASE TABLE'
+        AND table_name = ANY($1::text[])
+    `,
+    [tableNames]
+  );
+
+  return result.rows.map((row) => row.table_name);
+}
+
+function getCommonColumns(sourceColumns, targetColumns) {
+  const sourceSet = new Set(sourceColumns);
+  return targetColumns.filter((column) => sourceSet.has(column));
+}
+
 async function readRows(client, tableName, columns) {
   const columnList = columns.map(quoteIdentifier).join(", ");
   const result = await client.query(`SELECT ${columnList} FROM ${quoteIdentifier(tableName)}`);
@@ -94,7 +126,22 @@ async function insertRows(client, tableName, columns, rows) {
 }
 
 async function syncTable(sourceClient, targetClient, tableName) {
-  const columns = await getTableColumns(targetClient, tableName);
+  const sourceColumns = await getTableColumns(sourceClient, tableName);
+  const targetColumns = await getTableColumns(targetClient, tableName);
+  const columns = getCommonColumns(sourceColumns, targetColumns);
+
+  if (!columns.length) {
+    console.warn(`Skipping ${tableName}; no shared columns found between source and target.`);
+    return;
+  }
+
+  const skippedColumns = targetColumns.filter((column) => !sourceColumns.includes(column));
+  if (skippedColumns.length > 0) {
+    console.warn(
+      `Schema mismatch for ${tableName}; skipping columns not present in source: ${skippedColumns.join(", ")}`
+    );
+  }
+
   const rows = await readRows(sourceClient, tableName, columns);
   await insertRows(targetClient, tableName, columns, rows);
   console.log(`Synced ${tableName}: ${rows.length} row(s)`);
@@ -126,12 +173,27 @@ async function main() {
   await targetClient.connect();
 
   try {
-    await targetClient.query("BEGIN");
-    await targetClient.query(
-      `TRUNCATE TABLE ${TABLES.map(quoteIdentifier).join(", ")} RESTART IDENTITY CASCADE`
-    );
+    const sourceTables = new Set(await getExistingTables(sourceClient, TABLES));
+    const targetTables = new Set(await getExistingTables(targetClient, TABLES));
+    const tablesToSync = TABLES.filter((tableName) => sourceTables.has(tableName) && targetTables.has(tableName));
+    const skippedMissingSource = TABLES.filter((tableName) => !sourceTables.has(tableName));
+    const skippedMissingTarget = TABLES.filter((tableName) => sourceTables.has(tableName) && !targetTables.has(tableName));
 
-    for (const tableName of TABLES) {
+    if (skippedMissingSource.length > 0) {
+      console.warn(`Skipping tables missing in source database: ${skippedMissingSource.join(", ")}`);
+    }
+    if (skippedMissingTarget.length > 0) {
+      console.warn(`Skipping tables missing in local database: ${skippedMissingTarget.join(", ")}`);
+    }
+
+    await targetClient.query("BEGIN");
+    if (tablesToSync.length > 0) {
+      await targetClient.query(
+        `TRUNCATE TABLE ${tablesToSync.map(quoteIdentifier).join(", ")} RESTART IDENTITY CASCADE`
+      );
+    }
+
+    for (const tableName of tablesToSync) {
       await syncTable(sourceClient, targetClient, tableName);
     }
 
