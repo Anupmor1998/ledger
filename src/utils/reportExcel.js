@@ -12,7 +12,11 @@ function styleMetaCell(cell, options = {}) {
   const bold = options.bold ?? false;
 
   cell.font = { name: "Courier New", size: fontSize, bold };
-  cell.alignment = { horizontal: alignment, vertical: "middle", wrapText: true };
+  cell.alignment = {
+    horizontal: alignment,
+    vertical: "middle",
+    wrapText: true,
+  };
   cell.fill = META_FILL;
 }
 
@@ -63,8 +67,12 @@ function addSheet(workbook, sheetConfig) {
   const worksheet = workbook.addWorksheet(sheetConfig.name);
   const columns = Array.isArray(sheetConfig.columns) ? sheetConfig.columns : [];
   const rows = Array.isArray(sheetConfig.rows) ? sheetConfig.rows : [];
-  const sections = Array.isArray(sheetConfig.sections) ? sheetConfig.sections : [];
-  const headerLines = Array.isArray(sheetConfig.headerLines) ? sheetConfig.headerLines : [];
+  const sections = Array.isArray(sheetConfig.sections)
+    ? sheetConfig.sections
+    : [];
+  const headerLines = Array.isArray(sheetConfig.headerLines)
+    ? sheetConfig.headerLines
+    : [];
   const totalColumns = Math.max(columns.length, 1);
   let currentRow = 1;
 
@@ -81,18 +89,20 @@ function addSheet(workbook, sheetConfig) {
     currentRow += 1;
   }
 
-  if (columns.length > 0) {
-    writeTableHeaderRow(worksheet, currentRow, columns);
-    currentRow += 1;
-  }
-
   if (sections.length > 0) {
     sections.forEach((section, sectionIndex) => {
-      const sectionHeaderLines = Array.isArray(section.headerLines) ? section.headerLines : [];
-      const sectionColumns = Array.isArray(section.columns) && section.columns.length > 0 ? section.columns : columns;
+      const sectionHeaderLines = Array.isArray(section.headerLines)
+        ? section.headerLines
+        : [];
+      const sectionColumns =
+        Array.isArray(section.columns) && section.columns.length > 0
+          ? section.columns
+          : columns;
       const sectionRows = Array.isArray(section.rows) ? section.rows : [];
       const showHeader = section.showHeader !== false;
-      const footerLines = Array.isArray(section.footerLines) ? section.footerLines : [];
+      const footerLines = Array.isArray(section.footerLines)
+        ? section.footerLines
+        : [];
 
       if (sectionIndex > 0) {
         currentRow += 1;
@@ -130,6 +140,10 @@ function addSheet(workbook, sheetConfig) {
       });
     });
   } else {
+    if (columns.length > 0) {
+      writeTableHeaderRow(worksheet, currentRow, columns);
+      currentRow += 1;
+    }
     rows.forEach((row) => {
       const dataRow = worksheet.getRow(currentRow);
       const isHighlightedRow = Boolean(row?.__highlight);
@@ -147,12 +161,28 @@ function addSheet(workbook, sheetConfig) {
     });
   }
 
-  worksheet.views = [
-    {
-      state: "frozen",
-      ySplit: Math.max(headerLines.length + (columns.length > 0 ? 2 : 0), 0),
-    },
-  ];
+  const hasRepeatingSections = sections.some(
+    (section) =>
+      Array.isArray(section.headerLines) && section.headerLines.length > 0,
+  );
+
+  if (Array.isArray(sheetConfig.views)) {
+    worksheet.views = sheetConfig.views;
+  } else if (hasRepeatingSections) {
+    worksheet.views = [{ state: "normal" }];
+  } else if (columns.length > 0) {
+    worksheet.views = [
+      {
+        state: "frozen",
+        ySplit: Math.max(
+          headerLines.length > 0 ? headerLines.length + 2 : 1,
+          0,
+        ),
+      },
+    ];
+  } else {
+    worksheet.views = [{ state: "normal" }];
+  }
 
   return worksheet;
 }
@@ -163,7 +193,7 @@ async function sendWorkbook(res, fileName, sheets) {
 
   res.setHeader(
     "Content-Type",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   );
   res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
 

@@ -116,7 +116,7 @@ function normalizeGroupByFilter(value, reportType) {
   if (!Object.values(REPORT_GROUP_BY).includes(normalized)) {
     throw new AppError(
       "groupBy must be one of: date, customer, manufacturer, quality",
-      400
+      400,
     );
   }
 
@@ -214,7 +214,9 @@ async function getOrderFilters(query, userId) {
 
 async function getSelectedReportParty(query, reportType, userId) {
   const isManufacturerReport = reportType === "manufacturer";
-  const partyId = isManufacturerReport ? query.manufacturerId : query.customerId;
+  const partyId = isManufacturerReport
+    ? query.manufacturerId
+    : query.customerId;
   if (!partyId) {
     return null;
   }
@@ -257,7 +259,7 @@ function buildReportColumns(reportType) {
           { header: "Customer Name", key: "partyName", width: 24 },
         ]
       : [
-          { header: "Manufacture Firm", key: "partyFirmName", width: 24 },
+          { header: "Manufacturer Firm", key: "partyFirmName", width: 24 },
           { header: "Manufacturer Name", key: "partyName", width: 24 },
         ];
 
@@ -300,7 +302,7 @@ function computeReportTotals(orders) {
     {
       amount: 0,
       lot: 0,
-    }
+    },
   );
 }
 
@@ -368,15 +370,50 @@ function getScopePartyLabel(reportType) {
 
 function getScopeHeaderLines(party, reportType) {
   const partyLabel = getScopePartyLabel(reportType);
-  const name = String(party?.firmName || party?.name || "-").trim() || "-";
-  return [
-    {
-      value: `${partyLabel} Name : ${name}`,
+  const firmName = String(party?.firmName || "").trim();
+  const personName = String(party?.name || "").trim();
+  const lines = [];
+
+  if (
+    firmName &&
+    personName &&
+    firmName.toLowerCase() !== personName.toLowerCase()
+  ) {
+    lines.push(
+      {
+        value: `${partyLabel} Firm Name : ${firmName}`,
+        alignment: "left",
+        fontSize: 11,
+        bold: true,
+        height: 20,
+      },
+      {
+        value: `${partyLabel} Name : ${personName}`,
+        alignment: "left",
+        fontSize: 11,
+        bold: true,
+        height: 20,
+      },
+    );
+  } else if (firmName && !personName) {
+    lines.push({
+      value: `${partyLabel} Firm Name : ${firmName}`,
       alignment: "left",
       fontSize: 11,
       bold: true,
       height: 20,
-    },
+    });
+  } else {
+    lines.push({
+      value: `${partyLabel} Name : ${personName || firmName || "-"}`,
+      alignment: "left",
+      fontSize: 11,
+      bold: true,
+      height: 20,
+    });
+  }
+
+  lines.push(
     {
       value: `Address   : ${String(party?.address || "-").trim() || "-"}`,
       alignment: "left",
@@ -391,20 +428,57 @@ function getScopeHeaderLines(party, reportType) {
       bold: true,
       height: 20,
     },
-  ];
+  );
+
+  return lines;
 }
 
 function getSelectedPartyHeaderLines(party, reportType) {
   const partyLabel = getScopePartyLabel(reportType);
-  const name = String(party?.firmName || party?.name || "-").trim() || "-";
-  return [
-    {
-      value: `${partyLabel} Name : ${name}`,
+  const firmName = String(party?.firmName || "").trim();
+  const personName = String(party?.name || "").trim();
+  const lines = [];
+
+  if (
+    firmName &&
+    personName &&
+    firmName.toLowerCase() !== personName.toLowerCase()
+  ) {
+    lines.push(
+      {
+        value: `${partyLabel} Firm Name : ${firmName}`,
+        alignment: "left",
+        fontSize: 14,
+        bold: true,
+        height: 24,
+      },
+      {
+        value: `${partyLabel} Name : ${personName}`,
+        alignment: "left",
+        fontSize: 14,
+        bold: true,
+        height: 24,
+      },
+    );
+  } else if (firmName && !personName) {
+    lines.push({
+      value: `${partyLabel} Firm Name : ${firmName}`,
       alignment: "left",
       fontSize: 14,
       bold: true,
       height: 24,
-    },
+    });
+  } else {
+    lines.push({
+      value: `${partyLabel} Name : ${personName || firmName || "-"}`,
+      alignment: "left",
+      fontSize: 14,
+      bold: true,
+      height: 24,
+    });
+  }
+
+  lines.push(
     {
       value: `Address   : ${String(party?.address || "-").trim() || "-"}`,
       alignment: "left",
@@ -419,7 +493,9 @@ function getSelectedPartyHeaderLines(party, reportType) {
       bold: true,
       height: 24,
     },
-  ];
+  );
+
+  return lines;
 }
 
 function buildFinalTotalRow(finalTotals) {
@@ -438,10 +514,9 @@ function buildFinalTotalRow(finalTotals) {
 }
 
 function getScopeSortLabel(scopeParty, reportType) {
-  const label =
-    reportType === "manufacturer" ? "Manufacturer" : "Customer";
+  const label = reportType === "manufacturer" ? "Manufacturer" : "Customer";
   return String(
-    scopeParty?.firmName || scopeParty?.name || `${label}: UNKNOWN`
+    scopeParty?.firmName || scopeParty?.name || `${label}: UNKNOWN`,
   ).trim();
 }
 
@@ -453,8 +528,10 @@ function buildReportSections(orders, reportType, groupBy, query) {
   if (specificScope) {
     const sections = [
       {
-        showHeader: false,
-        rows: sortReportOrders(orders).map((order) => orderToReportRow(order, reportType)),
+        showHeader: true,
+        rows: sortReportOrders(orders).map((order) =>
+          orderToReportRow(order, reportType),
+        ),
       },
     ];
     sections.push({
@@ -486,12 +563,11 @@ function buildReportSections(orders, reportType, groupBy, query) {
   });
 
   const sortedScopes = [...groupMap.values()].sort((left, right) =>
-    getScopeSortLabel(left.scopeParty, reportType)
-      .localeCompare(
-        getScopeSortLabel(right.scopeParty, reportType),
-        undefined,
-        { sensitivity: "base" }
-      )
+    getScopeSortLabel(left.scopeParty, reportType).localeCompare(
+      getScopeSortLabel(right.scopeParty, reportType),
+      undefined,
+      { sensitivity: "base" },
+    ),
   );
 
   const sections = [];
@@ -502,7 +578,9 @@ function buildReportSections(orders, reportType, groupBy, query) {
     if (groupBy === REPORT_GROUP_BY.DATE) {
       sections.push({
         headerLines: getScopeHeaderLines(scopeGroup.scopeParty, reportType),
-        rows: sortedScopeOrders.map((order) => orderToReportRow(order, reportType)),
+        rows: sortedScopeOrders.map((order) =>
+          orderToReportRow(order, reportType),
+        ),
         footerLines: [
           {
             value: "=========================",
@@ -542,14 +620,19 @@ function buildReportSections(orders, reportType, groupBy, query) {
       getGroupDisplayName(left.groupValue, groupBy).localeCompare(
         getGroupDisplayName(right.groupValue, groupBy),
         undefined,
-        { sensitivity: "base" }
-      )
+        { sensitivity: "base" },
+      ),
     );
 
     sortedInnerGroups.forEach((innerGroup, index) => {
       sections.push({
-        headerLines: index === 0 ? getScopeHeaderLines(scopeGroup.scopeParty, reportType) : [],
-        rows: sortReportOrders(innerGroup.orders).map((order) => orderToReportRow(order, reportType)),
+        headerLines:
+          index === 0
+            ? getScopeHeaderLines(scopeGroup.scopeParty, reportType)
+            : [],
+        rows: sortReportOrders(innerGroup.orders).map((order) =>
+          orderToReportRow(order, reportType),
+        ),
         footerLines: [
           {
             value: "=========================",
@@ -584,10 +667,11 @@ async function exportReportByType(req, res, reportType, format = "xlsx") {
   const selectedParty = await getSelectedReportParty(
     req.query,
     reportType,
-    req.user.userId
+    req.user.userId,
   );
 
-  const baseFileName = reportType === "manufacturer" ? "manufacturer-report" : "customer-report";
+  const baseFileName =
+    reportType === "manufacturer" ? "manufacturer-report" : "customer-report";
   const fileName = `${baseFileName}.${normalizedFormat === "pdf" ? "pdf" : "xlsx"}`;
   const sheetColumns = buildReportColumns(reportType);
   const headerLines = [
@@ -612,7 +696,9 @@ async function exportReportByType(req, res, reportType, format = "xlsx") {
       bold: true,
       height: 24,
     },
-    ...(selectedParty ? getSelectedPartyHeaderLines(selectedParty, reportType) : []),
+    ...(selectedParty
+      ? getSelectedPartyHeaderLines(selectedParty, reportType)
+      : []),
   ].filter(Boolean);
 
   const sheetConfig = {

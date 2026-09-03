@@ -3,23 +3,22 @@ const PDFDocument = require("pdfkit");
 const META_FILL = "#d9d9d9";
 const BORDER_COLOR = "#444444";
 const TEXT_COLOR = "#111111";
-const FONT_LATIN_REGULAR = require.resolve("@fontsource/noto-sans/files/noto-sans-latin-400-normal.woff");
-const FONT_LATIN_BOLD = require.resolve("@fontsource/noto-sans/files/noto-sans-latin-700-normal.woff");
-const FONT_DEVANAGARI_REGULAR = require.resolve(
-  "@fontsource/noto-sans-devanagari/files/noto-sans-devanagari-devanagari-400-normal.woff",
-);
-const FONT_DEVANAGARI_BOLD = require.resolve(
-  "@fontsource/noto-sans-devanagari/files/noto-sans-devanagari-devanagari-700-normal.woff",
-);
-const FONT_GUJARATI_REGULAR = require.resolve(
-  "@fontsource/noto-sans-gujarati/files/noto-sans-gujarati-gujarati-400-normal.woff",
-);
-const FONT_GUJARATI_BOLD = require.resolve(
-  "@fontsource/noto-sans-gujarati/files/noto-sans-gujarati-gujarati-700-normal.woff",
-);
+const FONT_LATIN_REGULAR =
+  require.resolve("@fontsource/noto-sans/files/noto-sans-latin-400-normal.woff");
+const FONT_LATIN_BOLD =
+  require.resolve("@fontsource/noto-sans/files/noto-sans-latin-700-normal.woff");
+const FONT_DEVANAGARI_REGULAR =
+  require.resolve("@fontsource/noto-sans-devanagari/files/noto-sans-devanagari-devanagari-400-normal.woff");
+const FONT_DEVANAGARI_BOLD =
+  require.resolve("@fontsource/noto-sans-devanagari/files/noto-sans-devanagari-devanagari-700-normal.woff");
+const FONT_GUJARATI_REGULAR =
+  require.resolve("@fontsource/noto-sans-gujarati/files/noto-sans-gujarati-gujarati-400-normal.woff");
+const FONT_GUJARATI_BOLD =
+  require.resolve("@fontsource/noto-sans-gujarati/files/noto-sans-gujarati-gujarati-700-normal.woff");
 
 function resolveWidth(columns, availableWidth) {
-  const totalWeight = columns.reduce((sum, column) => sum + Number(column.width || 18), 0) || 1;
+  const totalWeight =
+    columns.reduce((sum, column) => sum + Number(column.width || 18), 0) || 1;
   return columns.map((column) => ({
     ...column,
     pdfWidth: (availableWidth * Number(column.width || 18)) / totalWeight,
@@ -162,7 +161,9 @@ function drawMergedRow(doc, text, options = {}, totalWidth) {
   const startX = doc.page.margins.left;
   const startY = doc.y;
   doc.save();
-  doc.rect(startX, startY, totalWidth, height).fillAndStroke(META_FILL, META_FILL);
+  doc
+    .rect(startX, startY, totalWidth, height)
+    .fillAndStroke(META_FILL, META_FILL);
   doc.restore();
 
   doc.fillColor(TEXT_COLOR);
@@ -185,7 +186,14 @@ function drawTableHeader(doc, columns, widths) {
   const startY = doc.y;
 
   doc.save();
-  doc.rect(startX, startY, widths.reduce((sum, width) => sum + width, 0), height).fillAndStroke("#ffffff", BORDER_COLOR);
+  doc
+    .rect(
+      startX,
+      startY,
+      widths.reduce((sum, width) => sum + width, 0),
+      height,
+    )
+    .fillAndStroke("#ffffff", BORDER_COLOR);
   doc.restore();
 
   let cursorX = startX;
@@ -217,7 +225,7 @@ function drawDataRow(doc, columns, widths, row) {
       width: Math.max(widths[index] - padding * 2, 20),
       fontSize: 10,
       align: "left",
-    })
+    }),
   );
   const rowHeight = Math.max(18, ...heights.map((value) => value + 8));
 
@@ -232,7 +240,9 @@ function drawDataRow(doc, columns, widths, row) {
   columns.forEach((column, index) => {
     const width = widths[index];
     doc.save();
-    doc.rect(cursorX, startY, width, rowHeight).fillAndStroke(fill, BORDER_COLOR);
+    doc
+      .rect(cursorX, startY, width, rowHeight)
+      .fillAndStroke(fill, BORDER_COLOR);
     doc.restore();
 
     doc.fillColor(TEXT_COLOR);
@@ -252,51 +262,83 @@ function drawDataRow(doc, columns, widths, row) {
 }
 
 function drawFooterLine(doc, text, totalWidth) {
-  drawMergedRow(doc, text, { alignment: "center", bold: true, fontSize: 11, height: 18 }, totalWidth);
+  drawMergedRow(
+    doc,
+    text,
+    { alignment: "center", bold: true, fontSize: 11, height: 18 },
+    totalWidth,
+  );
 }
 
 function renderSheet(doc, sheetConfig) {
   const columns = Array.isArray(sheetConfig.columns) ? sheetConfig.columns : [];
-  const sections = Array.isArray(sheetConfig.sections) ? sheetConfig.sections : [];
-  const headerLines = Array.isArray(sheetConfig.headerLines) ? sheetConfig.headerLines : [];
-  const totalWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
-  const widths = resolveWidth(columns, totalWidth).map((column) => column.pdfWidth);
+  const sections = Array.isArray(sheetConfig.sections)
+    ? sheetConfig.sections
+    : [];
+  const headerLines = Array.isArray(sheetConfig.headerLines)
+    ? sheetConfig.headerLines
+    : [];
+  const totalWidth =
+    doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  const widths = resolveWidth(columns, totalWidth).map(
+    (column) => column.pdfWidth,
+  );
 
-  headerLines.forEach((line) => drawMergedRow(doc, getLineValue(line), line || {}, totalWidth));
+  headerLines.forEach((line) =>
+    drawMergedRow(doc, getLineValue(line), line || {}, totalWidth),
+  );
 
   if (headerLines.length > 0) {
     doc.moveDown(0.5);
   }
 
-  if (columns.length > 0) {
-    drawTableHeader(doc, columns, widths);
-  }
+  if (sections.length > 0) {
+    sections.forEach((section, sectionIndex) => {
+      if (sectionIndex > 0) {
+        doc.moveDown(0.5);
+      }
 
-  sections.forEach((section, sectionIndex) => {
-    if (sectionIndex > 0) {
-      doc.moveDown(0.5);
-    }
+      const sectionHeaderLines = Array.isArray(section.headerLines)
+        ? section.headerLines
+        : [];
+      const sectionColumns =
+        Array.isArray(section.columns) && section.columns.length > 0
+          ? section.columns
+          : columns;
+      const sectionWidths = resolveWidth(sectionColumns, totalWidth).map(
+        (column) => column.pdfWidth,
+      );
+      const sectionRows = Array.isArray(section.rows) ? section.rows : [];
+      const showHeader = section.showHeader !== false;
+      const footerLines = Array.isArray(section.footerLines)
+        ? section.footerLines
+        : [];
 
-    const sectionHeaderLines = Array.isArray(section.headerLines) ? section.headerLines : [];
-    const sectionColumns =
-      Array.isArray(section.columns) && section.columns.length > 0 ? section.columns : columns;
-    const sectionWidths = resolveWidth(sectionColumns, totalWidth).map((column) => column.pdfWidth);
-    const sectionRows = Array.isArray(section.rows) ? section.rows : [];
-    const showHeader = section.showHeader !== false;
-    const footerLines = Array.isArray(section.footerLines) ? section.footerLines : [];
+      sectionHeaderLines.forEach((line) =>
+        drawMergedRow(doc, getLineValue(line), line || {}, totalWidth),
+      );
 
-    sectionHeaderLines.forEach((line) => drawMergedRow(doc, getLineValue(line), line || {}, totalWidth));
+      if (showHeader && sectionColumns.length > 0) {
+        drawTableHeader(doc, sectionColumns, sectionWidths);
+      }
 
-    if (showHeader && sectionColumns.length > 0) {
-      drawTableHeader(doc, sectionColumns, sectionWidths);
-    }
+      sectionRows.forEach((row) => {
+        drawDataRow(doc, sectionColumns, sectionWidths, row);
+      });
 
-    sectionRows.forEach((row) => {
-      drawDataRow(doc, sectionColumns, sectionWidths, row);
+      footerLines.forEach((line) =>
+        drawFooterLine(doc, getLineValue(line), totalWidth),
+      );
     });
-
-    footerLines.forEach((line) => drawFooterLine(doc, getLineValue(line), totalWidth));
-  });
+  } else {
+    if (columns.length > 0) {
+      drawTableHeader(doc, columns, widths);
+    }
+    const rows = Array.isArray(sheetConfig.rows) ? sheetConfig.rows : [];
+    rows.forEach((row) => {
+      drawDataRow(doc, columns, widths, row);
+    });
+  }
 }
 
 async function sendPdfReport(res, fileName, sheets) {
