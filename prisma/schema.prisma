@@ -7,58 +7,61 @@ datasource db {
 }
 
 model User {
-  id                  String               @id @default(uuid())
-  email               String               @unique
-  name                String?
-  password            String
-  role                UserRole             @default(USER)
-  theme               String               @default("light")
+  id                         String                   @id @default(uuid())
+  email                      String                   @unique
+  name                       String?
+  password                   String
+  role                       UserRole                 @default(USER)
+  theme                      String                   @default("light")
   selectedFinancialYearStart Int?
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
-  customers           Customer[]
-  manufacturers       Manufacturer[]
-  orders              Order[]
-  pendingPayments     PendingPayment[]
-  paymentReceipts     PaymentReceipt[]
-  paymentAllocations  PaymentAllocation[]
-  orderActivities     OrderActivity[]
-  remarkTemplates     RemarkTemplate[]
-  qualities           Quality[]
-  whatsappGroups      WhatsAppGroup[]
-  yearTransferBatches YearTransferBatch[]
-  passwordResetTokens PasswordResetToken[]
-  adminActionLogs     AdminActionLog[]
+  createdAt                  DateTime                 @default(now())
+  updatedAt                  DateTime                 @updatedAt
+  customers                  Customer[]
+  manufacturers              Manufacturer[]
+  orders                     Order[]
+  pendingPayments            PendingPayment[]
+  paymentReceipts            PaymentReceipt[]
+  paymentAllocations         PaymentAllocation[]
+  paymentEntries             PaymentEntry[]
+  paymentOrderAllocations    PaymentOrderAllocation[]
+  orderActivities            OrderActivity[]
+  remarkTemplates            RemarkTemplate[]
+  qualities                  Quality[]
+  whatsappGroups             WhatsAppGroup[]
+  yearTransferBatches        YearTransferBatch[]
+  passwordResetTokens        PasswordResetToken[]
+  adminActionLogs            AdminActionLog[]
 }
 
 model PasswordResetToken {
-  id        String   @id @default(uuid())
-  token     String   @unique
+  id        String    @id @default(uuid())
+  token     String    @unique
   userId    String
   expiresAt DateTime
   usedAt    DateTime?
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
 }
 
 model Customer {
-  id        String   @id @default(uuid())
-  userId    String
-  firmName  String
-  name      String
-  gstNo     String?
-  address   String
-  email     String?
-  phone     String
+  id                String         @id @default(uuid())
+  userId            String
+  firmName          String
+  name              String
+  gstNo             String?
+  address           String
+  email             String?
+  phone             String
   commissionBase    CommissionBase @default(PERCENT)
   commissionPercent Decimal        @default(1) @db.Decimal(5, 2)
   commissionLotRate Decimal?       @db.Decimal(12, 2)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  user      User     @relation(fields: [userId], references: [id], onDelete: Restrict)
-  orders    Order[]  @relation("OrderCustomer")
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  user              User           @relation(fields: [userId], references: [id], onDelete: Restrict)
+  orders            Order[]        @relation("OrderCustomer")
+  paymentEntries    PaymentEntry[]
 
   @@unique([userId, gstNo])
   @@index([userId])
@@ -81,64 +84,65 @@ model Manufacturer {
 }
 
 model Quality {
-  id     String  @id @default(uuid())
-  userId String
-  name   String
+  id       String  @id @default(uuid())
+  userId   String
+  name     String
   isActive Boolean @default(true)
-  user   User    @relation(fields: [userId], references: [id], onDelete: Restrict)
-  orders Order[]
+  user     User    @relation(fields: [userId], references: [id], onDelete: Restrict)
+  orders   Order[]
 
   @@unique([userId, name])
   @@index([userId])
 }
 
 model Order {
-  id             String       @id @default(uuid())
-  userId         String
-  customerId     String
-  manufacturerId String
-  qualityId      String
-  status         OrderStatus  @default(PENDING)
-  rate           Decimal      @db.Decimal(12, 2)
-  quantity       Int
-  lot            Int?
-  processedQuantity Decimal   @default(0) @db.Decimal(12, 2)
-  processedMeter    Decimal   @default(0) @db.Decimal(12, 2)
-  quantityUnit   QuantityUnit @default(TAKKA)
-  lotMeters      Decimal?     @db.Decimal(12, 2)
-  meter          Decimal?     @db.Decimal(12, 2)
-  commissionAmount Decimal?   @db.Decimal(12, 2)
-  remarks        String?
-  customerRemark String?
-  manufacturerRemark String?
-  dyeingGuarantees Boolean    @default(false)
-  paymentDueOn   Int?
-  deliveryDateFrom DateTime?
-  deliveryDateTo DateTime?
-  fyStartYear    Int
-  orderNo        Int
-  isCarryForward Boolean      @default(false)
+  id                        String                   @id @default(uuid())
+  userId                    String
+  customerId                String
+  manufacturerId            String
+  qualityId                 String
+  status                    OrderStatus              @default(PENDING)
+  rate                      Decimal                  @db.Decimal(12, 2)
+  quantity                  Int
+  lot                       Int?
+  processedQuantity         Decimal                  @default(0) @db.Decimal(12, 2)
+  processedMeter            Decimal                  @default(0) @db.Decimal(12, 2)
+  quantityUnit              QuantityUnit             @default(TAKKA)
+  lotMeters                 Decimal?                 @db.Decimal(12, 2)
+  meter                     Decimal?                 @db.Decimal(12, 2)
+  commissionAmount          Decimal?                 @db.Decimal(12, 2)
+  remarks                   String?
+  customerRemark            String?
+  manufacturerRemark        String?
+  dyeingGuarantees          Boolean                  @default(false)
+  paymentDueOn              Int?
+  deliveryDateFrom          DateTime?
+  deliveryDateTo            DateTime?
+  fyStartYear               Int
+  orderNo                   Int
+  isCarryForward            Boolean                  @default(false)
   carriedForwardFromOrderId String?
-  transferBatchId String?
-  orderDate      DateTime
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-  user           User         @relation(fields: [userId], references: [id], onDelete: Restrict)
-  customer       Customer     @relation("OrderCustomer", fields: [customerId], references: [id], onDelete: Restrict)
-  manufacturer   Manufacturer @relation("OrderManufacturer", fields: [manufacturerId], references: [id], onDelete: Restrict)
-  quality        Quality      @relation(fields: [qualityId], references: [id], onDelete: Restrict)
-  pendingPayment PendingPayment?
-  carriedForwardFromOrder Order? @relation("OrderCarryForward", fields: [carriedForwardFromOrderId], references: [id], onDelete: Restrict)
-  carriedForwardOrders Order[] @relation("OrderCarryForward")
-  transferBatch YearTransferBatch? @relation(fields: [transferBatchId], references: [id], onDelete: SetNull)
-  orderActivities OrderActivity[]
+  transferBatchId           String?
+  orderDate                 DateTime
+  createdAt                 DateTime                 @default(now())
+  updatedAt                 DateTime                 @updatedAt
+  user                      User                     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  customer                  Customer                 @relation("OrderCustomer", fields: [customerId], references: [id], onDelete: Restrict)
+  manufacturer              Manufacturer             @relation("OrderManufacturer", fields: [manufacturerId], references: [id], onDelete: Restrict)
+  quality                   Quality                  @relation(fields: [qualityId], references: [id], onDelete: Restrict)
+  pendingPayment            PendingPayment?
+  carriedForwardFromOrder   Order?                   @relation("OrderCarryForward", fields: [carriedForwardFromOrderId], references: [id], onDelete: Restrict)
+  carriedForwardOrders      Order[]                  @relation("OrderCarryForward")
+  transferBatch             YearTransferBatch?       @relation(fields: [transferBatchId], references: [id], onDelete: SetNull)
+  orderActivities           OrderActivity[]
+  paymentOrderAllocations   PaymentOrderAllocation[]
 
+  @@unique([userId, fyStartYear, orderNo])
   @@index([userId])
   @@index([userId, fyStartYear])
   @@index([customerId])
   @@index([manufacturerId])
   @@index([qualityId])
-  @@unique([userId, fyStartYear, orderNo])
 }
 
 model OrderActivity {
@@ -160,57 +164,57 @@ model OrderActivity {
 }
 
 model PaymentReceipt {
-  id                  String      @id @default(uuid())
+  id                  String              @id @default(uuid())
   userId              String
   fyStartYear         Int
   serialNo            Int
   accountName         String
   date                DateTime
   paymentMode         PaymentMode
-  amount              Decimal     @db.Decimal(12, 2)
+  amount              Decimal             @db.Decimal(12, 2)
   paymentReceivedDate DateTime
-  createdAt           DateTime    @default(now())
-  updatedAt           DateTime    @updatedAt
-  user                User        @relation(fields: [userId], references: [id], onDelete: Restrict)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  user                User                @relation(fields: [userId], references: [id], onDelete: Restrict)
   paymentAllocations  PaymentAllocation[]
 
+  @@unique([userId, fyStartYear, serialNo])
   @@index([userId])
   @@index([userId, fyStartYear])
-  @@unique([userId, fyStartYear, serialNo])
 }
 
 model PendingPayment {
-  id             String               @id @default(uuid())
-  userId         String
-  orderId        String               @unique
-  fyStartYear    Int
-  serialNo       Int
-  isCarryForward Boolean              @default(false)
+  id                                 String               @id @default(uuid())
+  userId                             String
+  orderId                            String               @unique
+  fyStartYear                        Int
+  serialNo                           Int
+  isCarryForward                     Boolean              @default(false)
   carriedForwardFromPendingPaymentId String?
-  transferBatchId String?
-  accountName    String
-  amountDue      Decimal              @db.Decimal(12, 2)
-  amountReceived Decimal              @default(0) @db.Decimal(12, 2)
-  finalSettledAmount Decimal?         @db.Decimal(12, 2)
-  discountAmount Decimal              @default(0) @db.Decimal(12, 2)
-  discountPercent Decimal             @default(0) @db.Decimal(5, 2)
-  balanceAmount  Decimal              @db.Decimal(12, 2)
-  status         PendingPaymentStatus @default(PENDING)
-  dueDate        DateTime?
-  settledAt      DateTime?
-  createdAt      DateTime             @default(now())
-  updatedAt      DateTime             @updatedAt
-  user           User                 @relation(fields: [userId], references: [id], onDelete: Restrict)
-  order          Order                @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  paymentAllocations PaymentAllocation[]
-  carriedForwardFromPendingPayment PendingPayment? @relation("PendingPaymentCarryForward", fields: [carriedForwardFromPendingPaymentId], references: [id], onDelete: Restrict)
-  carriedForwardPayments PendingPayment[] @relation("PendingPaymentCarryForward")
-  transferBatch YearTransferBatch? @relation(fields: [transferBatchId], references: [id], onDelete: SetNull)
+  transferBatchId                    String?
+  accountName                        String
+  amountDue                          Decimal              @db.Decimal(12, 2)
+  amountReceived                     Decimal              @default(0) @db.Decimal(12, 2)
+  finalSettledAmount                 Decimal?             @db.Decimal(12, 2)
+  discountAmount                     Decimal              @default(0) @db.Decimal(12, 2)
+  discountPercent                    Decimal              @default(0) @db.Decimal(5, 2)
+  balanceAmount                      Decimal              @db.Decimal(12, 2)
+  status                             PendingPaymentStatus @default(PENDING)
+  dueDate                            DateTime?
+  settledAt                          DateTime?
+  createdAt                          DateTime             @default(now())
+  updatedAt                          DateTime             @updatedAt
+  user                               User                 @relation(fields: [userId], references: [id], onDelete: Restrict)
+  order                              Order                @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  paymentAllocations                 PaymentAllocation[]
+  carriedForwardFromPendingPayment   PendingPayment?      @relation("PendingPaymentCarryForward", fields: [carriedForwardFromPendingPaymentId], references: [id], onDelete: Restrict)
+  carriedForwardPayments             PendingPayment[]     @relation("PendingPaymentCarryForward")
+  transferBatch                      YearTransferBatch?   @relation(fields: [transferBatchId], references: [id], onDelete: SetNull)
 
+  @@unique([userId, fyStartYear, serialNo])
   @@index([userId])
   @@index([userId, fyStartYear])
   @@index([status])
-  @@unique([userId, fyStartYear, serialNo])
 }
 
 enum QuantityUnit {
@@ -250,17 +254,17 @@ enum PendingPaymentStatus {
 }
 
 model PaymentAllocation {
-  id               String         @id @default(uuid())
-  userId           String
-  paymentReceiptId String
-  pendingPaymentId String
-  allocatedAmount  Decimal        @db.Decimal(12, 2)
-  isFinalSettlement Boolean       @default(false)
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
-  user             User           @relation(fields: [userId], references: [id], onDelete: Restrict)
-  paymentReceipt   PaymentReceipt @relation(fields: [paymentReceiptId], references: [id], onDelete: Cascade)
-  pendingPayment   PendingPayment @relation(fields: [pendingPaymentId], references: [id], onDelete: Restrict)
+  id                String         @id @default(uuid())
+  userId            String
+  paymentReceiptId  String
+  pendingPaymentId  String
+  allocatedAmount   Decimal        @db.Decimal(12, 2)
+  isFinalSettlement Boolean        @default(false)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  user              User           @relation(fields: [userId], references: [id], onDelete: Restrict)
+  paymentReceipt    PaymentReceipt @relation(fields: [paymentReceiptId], references: [id], onDelete: Cascade)
+  pendingPayment    PendingPayment @relation(fields: [pendingPaymentId], references: [id], onDelete: Restrict)
 
   @@index([userId])
   @@index([paymentReceiptId])
@@ -276,8 +280,8 @@ model WhatsAppGroup {
   updatedAt  DateTime @updatedAt
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId])
   @@unique([userId, name])
+  @@index([userId])
 }
 
 model RemarkTemplate {
@@ -288,20 +292,21 @@ model RemarkTemplate {
   updatedAt DateTime @updatedAt
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId])
   @@unique([userId, text])
+  @@index([userId])
 }
 
 model YearTransferBatch {
-  id                String           @id @default(uuid())
-  userId            String
-  sourceFyStartYear Int
-  targetFyStartYear Int
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
-  user              User             @relation(fields: [userId], references: [id], onDelete: Restrict)
-  carriedOrders     Order[]
-  carriedPayments   PendingPayment[]
+  id                    String           @id @default(uuid())
+  userId                String
+  sourceFyStartYear     Int
+  targetFyStartYear     Int
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+  user                  User             @relation(fields: [userId], references: [id], onDelete: Restrict)
+  carriedOrders         Order[]
+  carriedPayments       PendingPayment[]
+  carriedPaymentEntries PaymentEntry[]
 
   @@index([userId])
   @@index([userId, sourceFyStartYear])
@@ -324,4 +329,63 @@ model AdminActionLog {
   @@index([collectionKey])
   @@index([action])
   @@index([createdAt])
+}
+
+enum PaymentAdjustmentType {
+  ORDER_ID
+  PARTIAL
+}
+
+model PaymentEntry {
+  id                               String                @id @default(uuid())
+  userId                           String
+  fyStartYear                      Int
+  serialNo                         Int
+  customerId                       String
+  date                             DateTime
+  paymentMode                      PaymentMode
+  remark                           String?
+  amount                           Decimal               @db.Decimal(12, 2)
+  adjustedAgainst                  PaymentAdjustmentType @default(ORDER_ID)
+  orderDateFrom                    DateTime?
+  orderDateTo                      DateTime?
+  isFullySettled                   Boolean               @default(false)
+  finalSettledAmount               Decimal?              @db.Decimal(12, 2)
+  settledAt                        DateTime?
+  isCarryForward                   Boolean               @default(false)
+  carriedForwardFromPaymentEntryId String?
+  transferBatchId                  String?
+  createdAt                        DateTime              @default(now())
+  updatedAt                        DateTime              @updatedAt
+
+  user                           User                     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  customer                       Customer                 @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  allocations                    PaymentOrderAllocation[]
+  carriedForwardFromPaymentEntry PaymentEntry?            @relation("PaymentEntryCarryForward", fields: [carriedForwardFromPaymentEntryId], references: [id], onDelete: Restrict)
+  carriedForwardPaymentEntries   PaymentEntry[]           @relation("PaymentEntryCarryForward")
+  transferBatch                  YearTransferBatch?       @relation(fields: [transferBatchId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, fyStartYear, serialNo])
+  @@index([userId])
+  @@index([userId, fyStartYear])
+  @@index([customerId])
+}
+
+model PaymentOrderAllocation {
+  id              String   @id @default(uuid())
+  userId          String
+  paymentEntryId  String
+  orderId         String
+  allocatedAmount Decimal  @db.Decimal(12, 2)
+  isSettled       Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+  paymentEntry PaymentEntry @relation(fields: [paymentEntryId], references: [id], onDelete: Cascade)
+  order        Order        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@index([paymentEntryId])
+  @@index([orderId])
 }

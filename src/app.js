@@ -9,6 +9,7 @@ const adminRoutes = require("./routes/adminRoutes");
 const orderRoutes = require("./routes/orderRoutes");
 const pendingPaymentRoutes = require("./routes/pendingPaymentRoutes");
 const paymentReceiptRoutes = require("./routes/paymentReceiptRoutes");
+const paymentEntryRoutes = require("./routes/paymentEntryRoutes");
 const qualityRoutes = require("./routes/qualityRoutes");
 const reportRoutes = require("./routes/reportRoutes");
 const userRoutes = require("./routes/userRoutes");
@@ -30,7 +31,7 @@ app.use(
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
-  })
+  }),
 );
 app.use(express.json());
 app.use(requestLogger);
@@ -46,6 +47,7 @@ app.use(`${apiPrefix}/qualities`, qualityRoutes);
 app.use(`${apiPrefix}/orders`, orderRoutes);
 app.use(`${apiPrefix}/pending-payments`, pendingPaymentRoutes);
 app.use(`${apiPrefix}/payment-receipts`, paymentReceiptRoutes);
+app.use(`${apiPrefix}/payments`, paymentEntryRoutes);
 app.use(`${apiPrefix}/reports`, reportRoutes);
 
 app.use(notFoundHandler);
