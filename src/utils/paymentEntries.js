@@ -46,7 +46,9 @@ function computeLotValue(order) {
 }
 
 function computeMeterValue(order) {
-  return round2(safeNumber(order.processedMeter));
+  const processed = safeNumber(order.processedMeter);
+  if (processed > 0) return round2(processed);
+  return round2(safeNumber(order.meter));
 }
 
 async function getSelectedFinancialYearStartForUser(userId) {
@@ -87,6 +89,56 @@ function isPaymentEntrySerialConflict(error) {
   );
 }
 
+function computeOrderFullCommission(order, customerConfig) {
+  const stored = roundCurrency(order?.commissionAmount);
+  if (stored > 0) {
+    return stored;
+  }
+
+  const quantity = Number(order?.quantity || 0);
+  const rate = Number(order?.rate || 0);
+  const quantityUnit = String(order?.quantityUnit || "TAKKA").toUpperCase();
+  const lotMeters = Number(order?.lotMeters || 0);
+  const customer = customerConfig || order?.customer;
+
+  if (
+    !Number.isFinite(quantity) ||
+    quantity <= 0 ||
+    !Number.isFinite(rate) ||
+    rate <= 0
+  ) {
+    return 0;
+  }
+
+  const commissionBase = String(
+    customer?.commissionBase || "PERCENT",
+  ).toUpperCase();
+  const commissionPercent =
+    Number(customer?.commissionPercent) > 0
+      ? Number(customer?.commissionPercent)
+      : 1;
+  const commissionLotRate = Number(customer?.commissionLotRate || 0);
+
+  if (commissionBase === "LOT") {
+    let lotQuantity = quantity;
+    if (quantityUnit === "TAKKA") lotQuantity = quantity / 12;
+    else if (quantityUnit === "METER" && lotMeters > 0)
+      lotQuantity = quantity / lotMeters;
+    return Math.round(lotQuantity * commissionLotRate);
+  }
+
+  let meter = Number(order?.meter || 0);
+  if (!meter || meter <= 0) {
+    if (quantityUnit === "METER") meter = quantity;
+    else if (quantityUnit === "LOT" && lotMeters > 0)
+      meter = quantity * lotMeters;
+    else if (lotMeters > 0) meter = quantity * (lotMeters / 12);
+  }
+  const baseAmount = meter * rate;
+  const gstAmount = baseAmount * 0.05;
+  return Math.round((baseAmount + gstAmount) * (commissionPercent / 100));
+}
+
 module.exports = {
   round2,
   roundCurrency,
@@ -94,6 +146,7 @@ module.exports = {
   formatCellDate,
   computeLotValue,
   computeMeterValue,
+  computeOrderFullCommission,
   getSelectedFinancialYearStartForUser,
   getNextPaymentEntrySerialNo,
   isPaymentEntrySerialConflict,

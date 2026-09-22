@@ -15,6 +15,16 @@ function parseSortOrder(value) {
 }
 
 function parsePagination(query) {
+  if (query.all === "true" || query.all === true) {
+    return {
+      enabled: false,
+      page: null,
+      limit: null,
+      skip: undefined,
+      take: undefined,
+    };
+  }
+
   const hasPagination = query.page !== undefined || query.limit !== undefined;
 
   if (!hasPagination) {
@@ -28,7 +38,10 @@ function parsePagination(query) {
   }
 
   const page = parsePositiveInt(query.page, DEFAULT_PAGE);
-  const limit = Math.min(parsePositiveInt(query.limit, DEFAULT_LIMIT), MAX_LIMIT);
+  const limit = Math.min(
+    parsePositiveInt(query.limit, DEFAULT_LIMIT),
+    MAX_LIMIT,
+  );
 
   return {
     enabled: true,
@@ -56,9 +69,16 @@ function tokenizeSearch(value) {
     .filter(Boolean);
 }
 
-function parseSort(query, allowedSortFields, defaultSortBy, defaultSortOrder = "desc") {
+function parseSort(
+  query,
+  allowedSortFields,
+  defaultSortBy,
+  defaultSortOrder = "desc",
+) {
   const requestedSortBy = query.sortBy;
-  const sortBy = allowedSortFields.includes(requestedSortBy) ? requestedSortBy : defaultSortBy;
+  const sortBy = allowedSortFields.includes(requestedSortBy)
+    ? requestedSortBy
+    : defaultSortBy;
   const sortOrder = parseSortOrder(query.sortOrder || defaultSortOrder);
   return { sortBy, sortOrder };
 }
