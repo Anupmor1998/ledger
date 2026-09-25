@@ -31,6 +31,8 @@ model User {
   yearTransferBatches        YearTransferBatch[]
   passwordResetTokens        PasswordResetToken[]
   adminActionLogs            AdminActionLog[]
+  supportTickets             SupportTicket[]          @relation("UserSupportTickets")
+  resolvedTickets            SupportTicket[]          @relation("AdminResolvedTickets")
 }
 
 model PasswordResetToken {
@@ -388,4 +390,54 @@ model PaymentOrderAllocation {
   @@index([userId])
   @@index([paymentEntryId])
   @@index([orderId])
+}
+
+enum TicketCategory {
+  BILLING_PAYMENT
+  ORDER_ISSUE
+  TECHNICAL_GLITCH
+  ACCOUNT_PROFILE
+  OTHER
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+model SupportTicket {
+  id                String         @id @default(uuid())
+  ticketNo          Int            @default(autoincrement())
+  userId            String
+  subject           String
+  category          TicketCategory @default(OTHER)
+  priority          TicketPriority @default(MEDIUM)
+  status            TicketStatus   @default(OPEN)
+  description       String
+  contactPhone      String?
+  contactPreference String         @default("WHATSAPP")
+  adminNotes        String?
+  resolution        String?
+  resolvedAt        DateTime?
+  resolvedByAdminId String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  user            User  @relation("UserSupportTickets", fields: [userId], references: [id], onDelete: Restrict)
+  resolvedByAdmin User? @relation("AdminResolvedTickets", fields: [resolvedByAdminId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([status])
+  @@index([category])
+  @@index([priority])
+  @@index([createdAt])
 }

@@ -4,12 +4,17 @@ const AppError = require("../utils/appError");
 
 async function authMiddleware(req, res, next) {
   const authHeader = req.headers.authorization;
+  let token = null;
 
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return next(new AppError("missing or invalid authorization header", 401));
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    token = authHeader.slice("Bearer ".length);
+  } else if (req.query && req.query.token) {
+    token = String(req.query.token);
   }
 
-  const token = authHeader.slice("Bearer ".length);
+  if (!token) {
+    return next(new AppError("missing or invalid authorization header", 401));
+  }
 
   try {
     const payload = verifyToken(token);

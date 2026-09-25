@@ -9,11 +9,24 @@ const {
   updateCollectionRecord,
   deleteCollectionRecord,
 } = require("../controllers/adminController");
+const {
+  listAllTickets,
+  getSupportStats,
+  updateTicketStatus,
+  deleteTicket,
+  streamAdminSupportLive,
+} = require("../controllers/supportTicketController");
 
 const router = express.Router();
 
 router.use(authMiddleware);
 router.use(requireRole("ADMIN"));
+
+router.get("/support/live", streamAdminSupportLive);
+router.get("/support/stats", getSupportStats);
+router.get("/support/tickets", listAllTickets);
+router.patch("/support/tickets/:id", updateTicketStatus);
+router.delete("/support/tickets/:id", deleteTicket);
 
 router.get("/collections", listCollections);
 router.get("/collections/:collection", listCollectionRecords);
