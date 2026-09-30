@@ -50,9 +50,9 @@ async function sendPasswordResetEmail(to, resetUrl) {
     await transporter.sendMail({
       from: PASSWORD_RESET_FROM_EMAIL || GMAIL_SMTP_EMAIL,
       to,
-      subject: "Ledger Password Reset",
+      subject: "Sauda Book Password Reset",
       html: `
-        <p>You requested a password reset for your Ledger account.</p>
+        <p>You requested a password reset for your Sauda Book account.</p>
         <p>
           <a href="${resetUrl}" target="_blank" rel="noopener noreferrer">
             Reset your password
@@ -99,7 +99,7 @@ async function sendSupportTicketAdminAlert({ ticket, user, adminEmails }) {
     cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
   const whatsappUrl = phoneFormatted
     ? `https://wa.me/${phoneFormatted}?text=${encodeURIComponent(
-        `Hi ${user.name || "there"}, regarding your Support Ticket #${ticket.ticketNo} (${ticket.subject}) on Ledger App...`,
+        `Hi ${user.name || "there"}, regarding your Support Ticket #${ticket.ticketNo} (${ticket.subject}) on Sauda Book...`,
       )}`
     : null;
 
@@ -186,7 +186,7 @@ async function sendSupportTicketAdminAlert({ ticket, user, adminEmails }) {
       </div>
 
       <div style="border-top: 1px solid #e2e8f0; padding-top: 12px; font-size: 11px; color: #94a3b8; text-align: center;">
-        This is an automated support notification sent to all Ledger administrators.
+        This is an automated support notification sent to all Sauda Book administrators.
       </div>
     </div>
   `;
@@ -245,11 +245,11 @@ async function sendSupportTicketStatusUpdateToUser({
       }
 
       <p style="color: #64748b; font-size: 13px; line-height: 1.5; margin-bottom: 20px;">
-        If you have any further questions or if your issue is not completely resolved, you can check your ticket status on the Ledger App or reply to this ticket.
+        If you have any further questions or if your issue is not completely resolved, you can check your ticket status on Sauda Book or reply to this ticket.
       </p>
 
       <div style="border-top: 1px solid #e2e8f0; padding-top: 12px; font-size: 11px; color: #94a3b8; text-align: center;">
-        Ledger Support Team
+        Sauda Book Support Team
       </div>
     </div>
   `;
