@@ -185,8 +185,9 @@ function buildFinalTotalRows(
   finalTotals,
   partialPaymentEntries = [],
   orders = [],
+  label = "",
 ) {
-  const initialTotalRow = buildFinalTotalRow(finalTotals);
+  const initialTotalRow = buildFinalTotalRow(finalTotals, label);
   const payments = extractPartialPayments(orders, partialPaymentEntries);
 
   if (payments.length === 0) {
@@ -198,6 +199,30 @@ function buildFinalTotalRows(
     0,
   );
   const netAmount = roundCurrency(finalTotals.amount - totalPaymentsReceived);
+
+  const netLabel = label ? (label === "Grand Total" ? "Grand Net Total" : "Net Total") : "";
+  const netTotalRow = {
+    __highlight: true,
+    amount: netAmount,
+    lot: finalTotals.lot,
+    quality: netLabel,
+    meter: "",
+    rate: "",
+    orderId: "",
+    date: "",
+    partyFirmName: "",
+    partyName: "",
+    paymentStatus: "",
+  };
+
+  if (label === "Grand Total") {
+    const summaryPaymentRow = {
+      __mergeRest: true,
+      amount: totalPaymentsReceived,
+      details: "Total Payments Received",
+    };
+    return [initialTotalRow, summaryPaymentRow, netTotalRow];
+  }
 
   const bannerRow = {
     __isBanner: true,
@@ -218,20 +243,6 @@ function buildFinalTotalRows(
       details,
     };
   });
-
-  const netTotalRow = {
-    __highlight: true,
-    amount: netAmount,
-    lot: finalTotals.lot,
-    quality: "",
-    meter: "",
-    rate: "",
-    orderId: "",
-    date: "",
-    partyFirmName: "",
-    partyName: "",
-    paymentStatus: "",
-  };
 
   return [initialTotalRow, bannerRow, ...paymentRows, netTotalRow];
 }
@@ -735,12 +746,12 @@ function getSelectedPartyHeaderLines(party, reportType) {
   return lines;
 }
 
-function buildFinalTotalRow(finalTotals) {
+function buildFinalTotalRow(finalTotals, label = "") {
   return {
     __highlight: true,
     amount: finalTotals.amount,
     lot: finalTotals.lot,
-    quality: "",
+    quality: label,
     meter: "",
     rate: "",
     orderId: "",
@@ -824,13 +835,26 @@ function buildReportSections(
 
   sortedScopes.forEach((scopeGroup) => {
     const sortedScopeOrders = sortReportOrders(scopeGroup.orders);
+    const scopeTotals = computeReportTotals(scopeGroup.orders);
+    const scopePartyId = scopeGroup.scopeParty?.id;
+    const scopePartialEntries = Array.isArray(partialPaymentEntries)
+      ? partialPaymentEntries.filter((e) => e.customerId === scopePartyId)
+      : [];
+    const scopeTotalRows = buildFinalTotalRows(
+      scopeTotals,
+      scopePartialEntries,
+      scopeGroup.orders,
+    );
 
     if (groupBy === REPORT_GROUP_BY.DATE) {
       sections.push({
         headerLines: getScopeHeaderLines(scopeGroup.scopeParty, reportType),
-        rows: sortedScopeOrders.map((order) =>
-          orderToReportRow(order, reportType, paymentStatusFilter),
-        ),
+        rows: [
+          ...sortedScopeOrders.map((order) =>
+            orderToReportRow(order, reportType, paymentStatusFilter),
+          ),
+          ...scopeTotalRows,
+        ],
         footerLines: [
           {
             value: "=========================",
@@ -875,30 +899,42 @@ function buildReportSections(
     );
 
     sortedInnerGroups.forEach((innerGroup, index) => {
+      const isLastInner = index === sortedInnerGroups.length - 1;
+      const innerRows = sortReportOrders(innerGroup.orders).map((order) =>
+        orderToReportRow(order, reportType, paymentStatusFilter),
+      );
+
       sections.push({
         headerLines:
           index === 0
             ? getScopeHeaderLines(scopeGroup.scopeParty, reportType)
             : [],
-        rows: sortReportOrders(innerGroup.orders).map((order) =>
-          orderToReportRow(order, reportType, paymentStatusFilter),
-        ),
-        footerLines: [
-          {
-            value: "=========================",
-            alignment: "center",
-            fontSize: 11,
-            bold: true,
-            height: 18,
-          },
-        ],
+        rows: isLastInner ? [...innerRows, ...scopeTotalRows] : innerRows,
+        footerLines: isLastInner
+          ? [
+              {
+                value: "=========================",
+                alignment: "center",
+                fontSize: 11,
+                bold: true,
+                height: 18,
+              },
+            ]
+          : [],
       });
     });
   });
 
+  const grandTotalRows = buildFinalTotalRows(
+    finalTotals,
+    partialPaymentEntries,
+    orders,
+    "Grand Total",
+  );
+
   sections.push({
     showHeader: false,
-    rows: finalTotalRows,
+    rows: grandTotalRows,
   });
 
   return sections;
