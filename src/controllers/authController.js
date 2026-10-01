@@ -19,6 +19,10 @@ function buildSessionUser(user) {
     role: user.role,
     theme: user.theme,
     selectedFinancialYearStart: user.selectedFinancialYearStart ?? getFinancialYearStartYear(),
+    firmName: user.firmName || null,
+    businessSubtitle: user.businessSubtitle || null,
+    contactPhone: user.contactPhone || null,
+    businessAddress: user.businessAddress || null,
     createdAt: user.createdAt,
   };
 }
@@ -67,6 +71,10 @@ const signup = asyncHandler(async (req, res) => {
       role: true,
       theme: true,
       selectedFinancialYearStart: true,
+      firmName: true,
+      businessSubtitle: true,
+      contactPhone: true,
+      businessAddress: true,
       createdAt: true,
     },
   });
@@ -109,6 +117,10 @@ const createAdminAccount = asyncHandler(async (req, res) => {
       role: true,
       theme: true,
       selectedFinancialYearStart: true,
+      firmName: true,
+      businessSubtitle: true,
+      contactPhone: true,
+      businessAddress: true,
       createdAt: true,
     },
   });

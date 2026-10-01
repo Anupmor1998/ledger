@@ -32,12 +32,6 @@ const REPORT_GROUP_BY = {
   QUALITY: "QUALITY",
 };
 
-const DEFAULT_REPORT_COMPANY = {
-  address:
-    "D-601 SONAL RESIDENCY, OPP RESHMA ROW HOUSE, PUNA PATIYA, SURAT-395010",
-  phone: "9328447108,",
-};
-
 function toNumber(value) {
   const num = Number(value);
   return Number.isFinite(num) ? num : 0;
@@ -155,8 +149,11 @@ function formatReportLine(label, value) {
   return `${String(label).padEnd(10, " ")}: ${value || "-"}`;
 }
 
-function getReportCompanyInfo() {
-  return DEFAULT_REPORT_COMPANY;
+function getReportCompanyInfo(user) {
+  return {
+    address: user?.businessAddress || "",
+    phone: user?.contactPhone || "",
+  };
 }
 
 function getPartyDisplayName(party) {
@@ -654,6 +651,53 @@ function buildReportSections(orders, reportType, groupBy, query) {
   return sections;
 }
 
+function buildReportHeaderLines(user, selectedParty, reportType) {
+  const firmTitle = String(user?.firmName || user?.name || "Sauda Book").trim();
+  const subtitle = String(user?.businessSubtitle || "").trim();
+  const address = String(user?.businessAddress || "").trim();
+  const phone = String(user?.contactPhone || "").trim();
+
+  return [
+    {
+      value: firmTitle,
+      alignment: "center",
+      fontSize: 14,
+      bold: true,
+      height: 24,
+    },
+    subtitle
+      ? {
+          value: subtitle,
+          alignment: "center",
+          fontSize: 13,
+          bold: true,
+          height: 24,
+        }
+      : null,
+    address
+      ? {
+          value: address,
+          alignment: "center",
+          fontSize: 12,
+          bold: true,
+          height: 22,
+        }
+      : null,
+    phone
+      ? {
+          value: phone.startsWith("(M)") ? phone : `(M) ${phone}`,
+          alignment: "center",
+          fontSize: 13,
+          bold: true,
+          height: 24,
+        }
+      : null,
+    ...(selectedParty
+      ? getSelectedPartyHeaderLines(selectedParty, reportType)
+      : []),
+  ].filter(Boolean);
+}
+
 async function exportReportByType(req, res, reportType, format = "xlsx") {
   const normalizedFormat = String(format || "xlsx").toLowerCase();
   const status = normalizeStatusFilter(req.query.status);
@@ -674,32 +718,11 @@ async function exportReportByType(req, res, reportType, format = "xlsx") {
     reportType === "manufacturer" ? "manufacturer-report" : "customer-report";
   const fileName = `${baseFileName}.${normalizedFormat === "pdf" ? "pdf" : "xlsx"}`;
   const sheetColumns = buildReportColumns(reportType);
-  const headerLines = [
-    {
-      value: "Moolchand H Vadera",
-      alignment: "center",
-      fontSize: 14,
-      bold: true,
-      height: 24,
-    },
-    {
-      value: "Grey Broker & Commission Agent",
-      alignment: "center",
-      fontSize: 13,
-      bold: true,
-      height: 24,
-    },
-    {
-      value: "(M) 9374565779, 7016605692",
-      alignment: "center",
-      fontSize: 13,
-      bold: true,
-      height: 24,
-    },
-    ...(selectedParty
-      ? getSelectedPartyHeaderLines(selectedParty, reportType)
-      : []),
-  ].filter(Boolean);
+  const headerLines = buildReportHeaderLines(
+    req.user,
+    selectedParty,
+    reportType,
+  );
 
   const sheetConfig = {
     headerLines,

@@ -1108,16 +1108,69 @@ const updateMyPreferences = asyncHandler(async (req, res) => {
   });
 });
 
+const getMyProfile = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      role: true,
+      theme: true,
+      selectedFinancialYearStart: true,
+      firmName: true,
+      businessSubtitle: true,
+      contactPhone: true,
+      businessAddress: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+
+  if (!user) {
+    throw new AppError("user not found", 404);
+  }
+
+  return res.json({
+    ...user,
+    selectedFinancialYearStart:
+      user.selectedFinancialYearStart ?? getFinancialYearStartYear(),
+  });
+});
+
 const updateMyProfile = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
-  const { name, email, currentPassword, newPassword } = req.body;
+  const {
+    name,
+    email,
+    currentPassword,
+    newPassword,
+    firmName,
+    businessSubtitle,
+    contactPhone,
+    businessAddress,
+  } = req.body;
 
   const hasName = name !== undefined;
   const hasEmail = email !== undefined;
   const hasCurrentPassword = currentPassword !== undefined && currentPassword !== "";
   const hasNewPassword = newPassword !== undefined && newPassword !== "";
+  const hasFirmName = firmName !== undefined;
+  const hasBusinessSubtitle = businessSubtitle !== undefined;
+  const hasContactPhone = contactPhone !== undefined;
+  const hasBusinessAddress = businessAddress !== undefined;
 
-  if (!hasName && !hasEmail && !hasCurrentPassword && !hasNewPassword) {
+  if (
+    !hasName &&
+    !hasEmail &&
+    !hasCurrentPassword &&
+    !hasNewPassword &&
+    !hasFirmName &&
+    !hasBusinessSubtitle &&
+    !hasContactPhone &&
+    !hasBusinessAddress
+  ) {
     throw new AppError("at least one field is required", 400);
   }
 
@@ -1140,6 +1193,22 @@ const updateMyProfile = asyncHandler(async (req, res) => {
       throw new AppError("email cannot be empty", 400);
     }
     updateData.email = normalizedEmail;
+  }
+
+  if (hasFirmName) {
+    updateData.firmName = String(firmName || "").trim() || null;
+  }
+
+  if (hasBusinessSubtitle) {
+    updateData.businessSubtitle = String(businessSubtitle || "").trim() || null;
+  }
+
+  if (hasContactPhone) {
+    updateData.contactPhone = String(contactPhone || "").trim() || null;
+  }
+
+  if (hasBusinessAddress) {
+    updateData.businessAddress = String(businessAddress || "").trim() || null;
   }
 
   if (hasCurrentPassword || hasNewPassword) {
@@ -1166,6 +1235,10 @@ const updateMyProfile = asyncHandler(async (req, res) => {
       role: true,
       theme: true,
       selectedFinancialYearStart: true,
+      firmName: true,
+      businessSubtitle: true,
+      contactPhone: true,
+      businessAddress: true,
       createdAt: true,
       updatedAt: true,
     },
@@ -1296,6 +1369,7 @@ const deleteMyWhatsAppGroup = asyncHandler(async (req, res) => {
 
 module.exports = {
   listUsers,
+  getMyProfile,
   getMyPreferences,
   updateMyPreferences,
   updateMyProfile,

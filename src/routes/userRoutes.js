@@ -2,6 +2,7 @@ const express = require("express");
 const authMiddleware = require("../middlewares/authMiddleware");
 const {
   listUsers,
+  getMyProfile,
   getMyPreferences,
   updateMyPreferences,
   updateMyProfile,
@@ -24,6 +25,7 @@ const router = express.Router();
 router.use(authMiddleware);
 
 router.get("/", listUsers);
+router.get("/me", getMyProfile);
 router.put("/me", updateMyProfile);
 router.get("/me/preferences", getMyPreferences);
 router.put("/me/preferences", updateMyPreferences);
