@@ -17,7 +17,9 @@ function styleMetaCell(cell, options = {}) {
     vertical: "middle",
     wrapText: true,
   };
-  cell.fill = META_FILL;
+  if (options.fill !== false) {
+    cell.fill = META_FILL;
+  }
 }
 
 function styleHeaderRow(row) {
@@ -119,16 +121,44 @@ function addSheet(workbook, sheetConfig) {
       }
 
       sectionRows.forEach((row) => {
+        if (row?.__isBanner) {
+          worksheet.mergeCells(currentRow, 1, currentRow, totalColumns);
+          const bannerCell = worksheet.getCell(currentRow, 1);
+          bannerCell.value = row.text;
+          bannerCell.font = { name: "Courier New", size: 11, bold: true };
+          bannerCell.alignment = { horizontal: "left", vertical: "middle" };
+          worksheet.getRow(currentRow).height = 20;
+          currentRow += 1;
+          return;
+        }
+
+        if (row?.__mergeRest) {
+          const dataRow = worksheet.getRow(currentRow);
+          dataRow.getCell(1).value = row.amount;
+          styleDataCell(dataRow.getCell(1), { bold: false, highlight: false });
+
+          if (totalColumns > 1) {
+            worksheet.mergeCells(currentRow, 2, currentRow, totalColumns);
+            const detailsCell = dataRow.getCell(2);
+            detailsCell.value = row.details;
+            styleDataCell(detailsCell, { bold: false, highlight: false });
+          }
+          dataRow.height = 20;
+          currentRow += 1;
+          return;
+        }
+
         const dataRow = worksheet.getRow(currentRow);
         const isHighlightedRow = Boolean(row?.__highlight);
+        const isBoldRow = Boolean(row?.__bold || row?.__highlight);
         sectionColumns.forEach((col, index) => {
           dataRow.getCell(index + 1).value = row?.[col.key] ?? "";
           styleDataCell(dataRow.getCell(index + 1), {
-            bold: isHighlightedRow,
+            bold: isBoldRow,
             highlight: isHighlightedRow,
           });
         });
-        if (isHighlightedRow) {
+        if (isHighlightedRow || isBoldRow) {
           dataRow.height = 20;
         }
         currentRow += 1;

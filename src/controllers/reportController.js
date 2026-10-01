@@ -32,6 +32,221 @@ const REPORT_GROUP_BY = {
   QUALITY: "QUALITY",
 };
 
+const REPORT_PAYMENT_STATUS = {
+  UNPAID: "UNPAID",
+  PAID: "PAID",
+  ALL: "ALL",
+};
+
+function normalizePaymentStatusFilter(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toUpperCase();
+  if (!normalized) {
+    return REPORT_PAYMENT_STATUS.UNPAID;
+  }
+  if (!Object.values(REPORT_PAYMENT_STATUS).includes(normalized)) {
+    throw new AppError(
+      "paymentStatus must be one of: unpaid, paid, all",
+      400,
+    );
+  }
+  return normalized;
+}
+
+function resolveOrderPaymentStatus(order) {
+  const ppStatus = String(order?.pendingPayment?.status || "").toUpperCase();
+  if (ppStatus === "PAID" || ppStatus === "SETTLED") {
+    return "PAID";
+  }
+
+  const poas = Array.isArray(order?.paymentOrderAllocations)
+    ? order.paymentOrderAllocations
+    : [];
+  if (poas.length > 0) {
+    const isSettled = poas.some((alloc) => alloc.isSettled);
+    const totalAllocated = round2(
+      poas.reduce((sum, alloc) => sum + Number(alloc.allocatedAmount || 0), 0),
+    );
+    const commission = roundCurrency(order.commissionAmount ?? 0);
+    if (isSettled || (commission > 0 && totalAllocated >= commission)) {
+      return "PAID";
+    }
+    if (totalAllocated > 0) {
+      return "PARTIAL";
+    }
+  }
+
+  if (
+    ppStatus === "PARTIALLY_PAID" ||
+    ppStatus === "PARTIAL" ||
+    Number(order?.pendingPayment?.amountReceived || 0) > 0
+  ) {
+    return "PARTIAL";
+  }
+
+  return "UNPAID";
+}
+
+function extractPartialPayments(orders, partialPaymentEntries = []) {
+  const partialPayments = [];
+
+  if (Array.isArray(partialPaymentEntries)) {
+    partialPaymentEntries.forEach((entry) => {
+      const amount = Number(entry.amount || 0);
+      if (amount > 0) {
+        partialPayments.push({
+          orderNo: null,
+          serialNo: entry.serialNo,
+          amount,
+          date: entry.date || entry.createdAt,
+          paymentMode: entry.paymentMode || "-",
+          remark: entry.remark ? String(entry.remark).trim() : "-",
+          customerId: entry.customerId,
+          customerFirmName: entry.customer?.firmName || "",
+          customerName: entry.customer?.name || "",
+        });
+      }
+    });
+  }
+
+  orders.forEach((order) => {
+    if (resolveOrderPaymentStatus(order) !== "PARTIAL") {
+      return;
+    }
+
+    const poas = Array.isArray(order.paymentOrderAllocations)
+      ? order.paymentOrderAllocations
+      : [];
+    const pas = Array.isArray(order.pendingPayment?.paymentAllocations)
+      ? order.pendingPayment.paymentAllocations
+      : [];
+
+    if (poas.length > 0) {
+      poas.forEach((alloc) => {
+        const amount = Number(alloc.allocatedAmount || 0);
+        if (amount > 0) {
+          const entry = alloc.paymentEntry;
+          partialPayments.push({
+            orderNo: order.orderNo,
+            serialNo: entry?.serialNo,
+            amount,
+            date: entry?.date || alloc.createdAt,
+            paymentMode: entry?.paymentMode || "-",
+            remark: entry?.remark ? String(entry.remark).trim() : "-",
+            customerId: order.customerId,
+            customerFirmName: order.customer?.firmName || "",
+            customerName: order.customer?.name || "",
+          });
+        }
+      });
+    } else if (pas.length > 0) {
+      pas.forEach((alloc) => {
+        const amount = Number(alloc.allocatedAmount || 0);
+        if (amount > 0) {
+          const receipt = alloc.paymentReceipt;
+          partialPayments.push({
+            orderNo: order.orderNo,
+            serialNo: receipt?.serialNo,
+            amount,
+            date:
+              receipt?.paymentReceivedDate ||
+              receipt?.date ||
+              alloc.createdAt,
+            paymentMode: receipt?.paymentMode || "-",
+            remark: "-",
+            customerId: order.customerId,
+            customerFirmName: order.customer?.firmName || "",
+            customerName: order.customer?.name || "",
+          });
+        }
+      });
+    } else {
+      const received = Number(order.pendingPayment?.amountReceived || 0);
+      if (received > 0) {
+        partialPayments.push({
+          orderNo: order.orderNo,
+          amount: received,
+          date: order.pendingPayment?.updatedAt || order.orderDate,
+          paymentMode: "-",
+          remark: "-",
+          customerId: order.customerId,
+          customerFirmName: order.customer?.firmName || "",
+          customerName: order.customer?.name || "",
+        });
+      }
+    }
+  });
+
+  return partialPayments;
+}
+
+function buildFinalTotalRows(
+  finalTotals,
+  partialPaymentEntries = [],
+  orders = [],
+) {
+  const initialTotalRow = buildFinalTotalRow(finalTotals);
+  const payments = extractPartialPayments(orders, partialPaymentEntries);
+
+  if (payments.length === 0) {
+    return [initialTotalRow];
+  }
+
+  const totalPaymentsReceived = payments.reduce(
+    (sum, p) => sum + roundCurrency(p.amount),
+    0,
+  );
+  const netAmount = roundCurrency(finalTotals.amount - totalPaymentsReceived);
+
+  const bannerRow = {
+    __isBanner: true,
+    text: "Payments Received:",
+    bold: true,
+  };
+
+  const paymentRows = payments.map((p) => {
+    const formattedDate = formatCellDate(p.date);
+    const orderText = p.orderNo ? `Order #${p.orderNo} | ` : "";
+    const remarkText =
+      p.remark && p.remark !== "-" && p.remark.trim() ? p.remark.trim() : "-";
+    const details = `${orderText}Date: ${formattedDate} | Mode: ${p.paymentMode} | Remark: ${remarkText}`;
+
+    return {
+      __mergeRest: true,
+      amount: roundCurrency(p.amount),
+      details,
+    };
+  });
+
+  const netTotalRow = {
+    __highlight: true,
+    amount: netAmount,
+    lot: finalTotals.lot,
+    quality: "",
+    meter: "",
+    rate: "",
+    orderId: "",
+    date: "",
+    partyFirmName: "",
+    partyName: "",
+    paymentStatus: "",
+  };
+
+  return [initialTotalRow, bannerRow, ...paymentRows, netTotalRow];
+}
+
+function matchesPaymentStatus(order, paymentStatusFilter) {
+  const status = resolveOrderPaymentStatus(order);
+  if (paymentStatusFilter === REPORT_PAYMENT_STATUS.PAID) {
+    return status === "PAID";
+  }
+  if (paymentStatusFilter === REPORT_PAYMENT_STATUS.UNPAID) {
+    return status === "UNPAID" || status === "PARTIAL";
+  }
+  return true;
+}
+
 function toNumber(value) {
   const num = Number(value);
   return Number.isFinite(num) ? num : 0;
@@ -237,6 +452,22 @@ function getOrderInclude() {
     customer: true,
     manufacturer: true,
     quality: true,
+    pendingPayment: {
+      include: {
+        paymentAllocations: {
+          include: {
+            paymentReceipt: true,
+          },
+          orderBy: { createdAt: "asc" },
+        },
+      },
+    },
+    paymentOrderAllocations: {
+      include: {
+        paymentEntry: true,
+      },
+      orderBy: { createdAt: "asc" },
+    },
   };
 }
 
@@ -269,12 +500,19 @@ function buildReportColumns(reportType) {
     { header: "orderId", key: "orderId", width: 12 },
     { header: "Date", key: "date", width: 14 },
     ...partyColumns,
+    { header: "Payment Status", key: "paymentStatus", width: 16 },
   ];
 }
 
-function orderToReportRow(order, reportType) {
+function orderToReportRow(order, reportType, paymentStatusFilter) {
   const party =
     reportType === "manufacturer" ? order.customer : order.manufacturer;
+  const paymentStatus = resolveOrderPaymentStatus(order);
+  const isPaid = paymentStatus === "PAID";
+  const shouldBold =
+    (paymentStatusFilter === REPORT_PAYMENT_STATUS.PAID ||
+      paymentStatusFilter === REPORT_PAYMENT_STATUS.ALL) &&
+    isPaid;
 
   return {
     amount: roundCurrency(order.commissionAmount ?? 0),
@@ -286,6 +524,8 @@ function orderToReportRow(order, reportType) {
     date: formatCellDate(order.orderDate),
     partyFirmName: party?.firmName || "",
     partyName: party?.name || "",
+    paymentStatus,
+    __bold: shouldBold,
   };
 }
 
@@ -507,6 +747,7 @@ function buildFinalTotalRow(finalTotals) {
     date: "",
     partyFirmName: "",
     partyName: "",
+    paymentStatus: "",
   };
 }
 
@@ -517,23 +758,35 @@ function getScopeSortLabel(scopeParty, reportType) {
   ).trim();
 }
 
-function buildReportSections(orders, reportType, groupBy, query) {
+function buildReportSections(
+  orders,
+  reportType,
+  groupBy,
+  query,
+  paymentStatusFilter,
+  partialPaymentEntries = [],
+) {
   const groupMap = new Map();
   const specificScope = isSpecificScope(query, reportType);
   const finalTotals = computeReportTotals(orders);
+  const finalTotalRows = buildFinalTotalRows(
+    finalTotals,
+    partialPaymentEntries,
+    orders,
+  );
 
   if (specificScope) {
     const sections = [
       {
         showHeader: true,
         rows: sortReportOrders(orders).map((order) =>
-          orderToReportRow(order, reportType),
+          orderToReportRow(order, reportType, paymentStatusFilter),
         ),
       },
     ];
     sections.push({
       showHeader: false,
-      rows: [buildFinalTotalRow(finalTotals)],
+      rows: finalTotalRows,
     });
     return sections;
   }
@@ -576,7 +829,7 @@ function buildReportSections(orders, reportType, groupBy, query) {
       sections.push({
         headerLines: getScopeHeaderLines(scopeGroup.scopeParty, reportType),
         rows: sortedScopeOrders.map((order) =>
-          orderToReportRow(order, reportType),
+          orderToReportRow(order, reportType, paymentStatusFilter),
         ),
         footerLines: [
           {
@@ -628,7 +881,7 @@ function buildReportSections(orders, reportType, groupBy, query) {
             ? getScopeHeaderLines(scopeGroup.scopeParty, reportType)
             : [],
         rows: sortReportOrders(innerGroup.orders).map((order) =>
-          orderToReportRow(order, reportType),
+          orderToReportRow(order, reportType, paymentStatusFilter),
         ),
         footerLines: [
           {
@@ -645,7 +898,7 @@ function buildReportSections(orders, reportType, groupBy, query) {
 
   sections.push({
     showHeader: false,
-    rows: [buildFinalTotalRow(finalTotals)],
+    rows: finalTotalRows,
   });
 
   return sections;
@@ -701,13 +954,17 @@ function buildReportHeaderLines(user, selectedParty, reportType) {
 async function exportReportByType(req, res, reportType, format = "xlsx") {
   const normalizedFormat = String(format || "xlsx").toLowerCase();
   const status = normalizeStatusFilter(req.query.status);
+  const paymentStatus = normalizePaymentStatusFilter(req.query.paymentStatus);
   const groupBy = normalizeGroupByFilter(req.query.groupBy, reportType);
   const where = await getOrderFilters(req.query, req.user.userId);
   if (status) {
     where.status = status;
   }
 
-  const orders = await fetchOrders(where);
+  const rawOrders = await fetchOrders(where);
+  const orders = rawOrders.filter((order) =>
+    matchesPaymentStatus(order, paymentStatus),
+  );
   const selectedParty = await getSelectedReportParty(
     req.query,
     reportType,
@@ -724,10 +981,43 @@ async function exportReportByType(req, res, reportType, format = "xlsx") {
     reportType,
   );
 
+  const customerIds = [
+    ...new Set(
+      [
+        req.query.customerId,
+        ...orders.map((o) => o.customerId),
+        ...rawOrders.map((o) => o.customerId),
+      ].filter(Boolean),
+    ),
+  ];
+
+  let partialPaymentEntries = [];
+  if (customerIds.length > 0 && paymentStatus !== REPORT_PAYMENT_STATUS.PAID) {
+    partialPaymentEntries = await prisma.paymentEntry.findMany({
+      where: {
+        userId: req.user.userId,
+        customerId: { in: customerIds },
+        adjustedAgainst: "PARTIAL",
+        isFullySettled: false,
+      },
+      include: {
+        customer: { select: { id: true, name: true, firmName: true } },
+      },
+      orderBy: [{ date: "asc" }, { serialNo: "asc" }],
+    });
+  }
+
   const sheetConfig = {
     headerLines,
     columns: sheetColumns,
-    sections: buildReportSections(orders, reportType, groupBy, req.query),
+    sections: buildReportSections(
+      orders,
+      reportType,
+      groupBy,
+      req.query,
+      paymentStatus,
+      partialPaymentEntries,
+    ),
   };
 
   if (normalizedFormat === "pdf") {

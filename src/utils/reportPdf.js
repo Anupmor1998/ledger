@@ -160,11 +160,13 @@ function drawMergedRow(doc, text, options = {}, totalWidth) {
 
   const startX = doc.page.margins.left;
   const startY = doc.y;
-  doc.save();
-  doc
-    .rect(startX, startY, totalWidth, height)
-    .fillAndStroke(META_FILL, META_FILL);
-  doc.restore();
+  if (options.fill !== false) {
+    doc.save();
+    doc
+      .rect(startX, startY, totalWidth, height)
+      .fillAndStroke(META_FILL, META_FILL);
+    doc.restore();
+  }
 
   doc.fillColor(TEXT_COLOR);
   drawRichText(doc, text, {
@@ -216,8 +218,76 @@ function drawTableHeader(doc, columns, widths) {
 }
 
 function drawDataRow(doc, columns, widths, row) {
+  if (row?.__isBanner) {
+    const totalWidth = widths.reduce((sum, w) => sum + w, 0);
+    drawMergedRow(
+      doc,
+      row.text,
+      {
+        alignment: "left",
+        bold: true,
+        fontSize: 10,
+        height: 20,
+        fill: false,
+      },
+      totalWidth,
+    );
+    return;
+  }
+
+  if (row?.__mergeRest) {
+    const padding = 4;
+    const firstWidth = widths[0];
+    const restWidth = widths.slice(1).reduce((sum, w) => sum + w, 0);
+    const rowHeight = 20;
+
+    ensurePageSpace(doc, rowHeight);
+    const startX = doc.page.margins.left;
+    const startY = doc.y;
+
+    // First cell (amount)
+    doc.save();
+    doc
+      .rect(startX, startY, firstWidth, rowHeight)
+      .fillAndStroke("#ffffff", BORDER_COLOR);
+    doc.restore();
+
+    doc.fillColor(TEXT_COLOR);
+    drawRichText(doc, cellText(row.amount), {
+      x: startX + padding,
+      y: startY + 4,
+      width: firstWidth - padding * 2,
+      align: "left",
+      fontSize: 10,
+      bold: false,
+    });
+
+    // Rest cells (details)
+    if (restWidth > 0) {
+      doc.save();
+      doc
+        .rect(startX + firstWidth, startY, restWidth, rowHeight)
+        .fillAndStroke("#ffffff", BORDER_COLOR);
+      doc.restore();
+
+      doc.fillColor(TEXT_COLOR);
+      drawRichText(doc, cellText(row.details), {
+        x: startX + firstWidth + padding,
+        y: startY + 4,
+        width: restWidth - padding * 2,
+        align: "left",
+        fontSize: 10,
+        bold: false,
+      });
+    }
+
+    doc.y = startY + rowHeight;
+    return;
+  }
+
   const padding = 4;
   const isHighlighted = Boolean(row?.__highlight);
+  const isBold = Boolean(row?.__bold || row?.__highlight);
   const fill = isHighlighted ? META_FILL : "#ffffff";
   const texts = columns.map((column) => cellText(row?.[column.key] ?? ""));
   const heights = texts.map((text, index) =>
@@ -252,7 +322,7 @@ function drawDataRow(doc, columns, widths, row) {
       width: width - padding * 2,
       align: "left",
       fontSize: 10,
-      bold: isHighlighted,
+      bold: isBold,
     });
 
     cursorX += width;
@@ -261,11 +331,19 @@ function drawDataRow(doc, columns, widths, row) {
   doc.y = startY + rowHeight;
 }
 
-function drawFooterLine(doc, text, totalWidth) {
+function drawFooterLine(doc, line, totalWidth) {
+  const text = getLineValue(line);
+  const options = typeof line === "object" && line !== null ? line : {};
   drawMergedRow(
     doc,
     text,
-    { alignment: "center", bold: true, fontSize: 11, height: 18 },
+    {
+      alignment: options.alignment || "center",
+      bold: options.bold !== undefined ? options.bold : true,
+      fontSize: options.fontSize || 11,
+      height: options.height || 18,
+      fill: options.fill,
+    },
     totalWidth,
   );
 }
@@ -327,7 +405,7 @@ function renderSheet(doc, sheetConfig) {
       });
 
       footerLines.forEach((line) =>
-        drawFooterLine(doc, getLineValue(line), totalWidth),
+        drawFooterLine(doc, line, totalWidth),
       );
     });
   } else {
