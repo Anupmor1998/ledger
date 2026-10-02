@@ -42,7 +42,7 @@ jobs:
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
-          R2_SUBDIR: ledger-server
+          R2_SUBDIR: db-backups
           RETENTION_DAYS: "30"
-          DB_NAME: ledger
+          DB_NAME: "sauda-book-db"
           PG_DUMP_BIN: /usr/lib/postgresql/17/bin/pg_dump
