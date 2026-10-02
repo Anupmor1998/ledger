@@ -1,0 +1,48 @@
+name: Daily DB Backup To Cloudflare R2
+
+on:
+  schedule:
+    # 12:00 AM midnight IST = 18:30 UTC
+    - cron: "30 18 * * *"
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install PostgreSQL 17 client and utilities
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl ca-certificates gnupg lsb-release zip
+          DIST_CODENAME="$(lsb_release -cs)"
+          echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt ${DIST_CODENAME}-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /usr/share/keyrings/postgresql.gpg
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+
+      - name: Verify CLI tools
+        run: |
+          /usr/lib/postgresql/17/bin/pg_dump --version
+          aws --version
+          zip -v | head -n 2
+          python3 --version
+
+      - name: Run backup to Cloudflare R2
+        run: |
+          chmod +x scripts/backup-to-r2.sh
+          scripts/backup-to-r2.sh
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_BACKUP }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          R2_SUBDIR: ledger-server
+          RETENTION_DAYS: "30"
+          DB_NAME: ledger
+          PG_DUMP_BIN: /usr/lib/postgresql/17/bin/pg_dump
