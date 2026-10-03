@@ -6,9 +6,10 @@ const getMarketDirectory = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
   const partyType = String(req.query.partyType || "buyer").toLowerCase(); // "buyer" or "seller"
   const qualityId = req.query.qualityId ? String(req.query.qualityId).trim() : "";
+  const qualitySearch = req.query.qualitySearch ? String(req.query.qualitySearch).trim() : "";
   const search = req.query.search ? String(req.query.search).trim().toLowerCase() : "";
 
-  // 1. Fetch all qualities for user to populate quality selector and top qualities chips
+  // 1. Fetch all qualities for user
   const allQualities = await prisma.quality.findMany({
     where: { userId },
     select: { id: true, name: true, isActive: true },
@@ -54,11 +55,13 @@ const getMarketDirectory = asyncHandler(async (req, res) => {
     .sort((a, b) => b.orderCount - a.orderCount)
     .slice(0, 10);
 
-  // If no qualityId is selected, return top qualities and general overview
-  if (!qualityId) {
+  // If neither qualityId nor qualitySearch is provided, return discovery overview
+  if (!qualityId && !qualitySearch) {
     return res.json({
       partyType,
       selectedQuality: null,
+      matchedQualities: [],
+      qualitySearch: "",
       topQualities,
       allQualities: qualitiesWithStats,
       parties: [],
@@ -67,29 +70,67 @@ const getMarketDirectory = asyncHandler(async (req, res) => {
         totalOrders: 0,
         lastMarketRate: 0,
         totalVolume: 0,
+        matchedQualitiesCount: 0,
       },
     });
   }
 
-  // Verify the selected quality exists
-  const selectedQuality = allQualities.find((q) => q.id === qualityId);
-  if (!selectedQuality) {
-    throw new AppError("Selected quality not found", 404);
+  // 3. Determine matched qualities:
+  // If specific qualityId is provided, match that single quality.
+  // Otherwise, match all qualities whose names contain qualitySearch (case-insensitive substring/partial match).
+  let matchedQualities = [];
+  if (qualityId) {
+    const exact = qualitiesWithStats.find((q) => q.id === qualityId);
+    if (exact) {
+      matchedQualities = [exact];
+    }
+  } else if (qualitySearch) {
+    const term = qualitySearch.toLowerCase();
+    matchedQualities = qualitiesWithStats.filter((q) =>
+      q.name.toLowerCase().includes(term)
+    );
   }
 
-  // Query non-cancelled orders for this quality
+  // If no matching qualities found for the search term
+  if (matchedQualities.length === 0) {
+    return res.json({
+      partyType,
+      selectedQuality: null,
+      matchedQualities: [],
+      qualitySearch,
+      topQualities,
+      allQualities: qualitiesWithStats,
+      parties: [],
+      summary: {
+        totalParties: 0,
+        totalOrders: 0,
+        lastMarketRate: 0,
+        totalVolume: 0,
+        matchedQualitiesCount: 0,
+      },
+    });
+  }
+
+  const matchedQualityIds = matchedQualities.map((q) => q.id);
   const isBuyer = partyType === "buyer";
+
+  // 4. Query non-cancelled orders for any of the matched qualities
   const orders = await prisma.order.findMany({
     where: {
       userId,
-      qualityId,
+      qualityId: { in: matchedQualityIds },
       status: { not: "CANCELLED" },
     },
-    include: isBuyer ? { customer: true } : { manufacturer: true },
+    include: {
+      quality: {
+        select: { id: true, name: true },
+      },
+      ...(isBuyer ? { customer: true } : { manufacturer: true }),
+    },
     orderBy: { orderDate: "desc" },
   });
 
-  // Group by Customer (buyer) or Manufacturer (seller)
+  // 5. Aggregate by Customer (buyer) or Manufacturer (seller)
   const partyMap = new Map();
   let latestMarketRate = 0;
   let totalVolume = 0;
@@ -107,6 +148,8 @@ const getMarketDirectory = asyncHandler(async (req, res) => {
     }
     totalVolume += qtyNum;
 
+    const qName = order.quality?.name || "";
+
     if (!partyMap.has(party.id)) {
       partyMap.set(party.id, {
         id: party.id,
@@ -123,6 +166,7 @@ const getMarketDirectory = asyncHandler(async (req, res) => {
         totalQuantity: qtyNum,
         totalMeter: meterNum,
         quantityUnit: order.quantityUnit || "TAKKA",
+        qualityDeals: qName ? { [qName]: 1 } : {},
       });
     } else {
       const existing = partyMap.get(party.id);
@@ -130,6 +174,9 @@ const getMarketDirectory = asyncHandler(async (req, res) => {
       existing.totalQuantity += qtyNum;
       existing.totalMeter += meterNum;
       existing.rates.push(rateNum);
+      if (qName) {
+        existing.qualityDeals[qName] = (existing.qualityDeals[qName] || 0) + 1;
+      }
     }
   }
 
@@ -139,14 +186,22 @@ const getMarketDirectory = asyncHandler(async (req, res) => {
       validRates.length > 0
         ? validRates.reduce((a, b) => a + b, 0) / validRates.length
         : p.lastRate;
+
+    const tradedQualities = Object.entries(p.qualityDeals || {}).map(([name, count]) => ({
+      name,
+      count,
+    }));
+
     return {
       ...p,
       avgRate: Number(avgRate.toFixed(2)),
       rates: undefined,
+      qualityDeals: undefined,
+      qualities: tradedQualities,
     };
   });
 
-  // Filter by search term if provided
+  // Filter by party search term if provided
   if (search) {
     partyList = partyList.filter(
       (p) =>
@@ -166,10 +221,9 @@ const getMarketDirectory = asyncHandler(async (req, res) => {
 
   return res.json({
     partyType,
-    selectedQuality: {
-      id: selectedQuality.id,
-      name: selectedQuality.name,
-    },
+    qualitySearch,
+    selectedQuality: matchedQualities.length === 1 ? matchedQualities[0] : null,
+    matchedQualities,
     topQualities,
     allQualities: qualitiesWithStats,
     parties: partyList,
@@ -178,6 +232,7 @@ const getMarketDirectory = asyncHandler(async (req, res) => {
       totalOrders: orders.length,
       totalVolume,
       lastMarketRate: latestMarketRate,
+      matchedQualitiesCount: matchedQualities.length,
     },
   });
 });
