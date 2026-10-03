@@ -37,6 +37,8 @@ model User {
   adminActionLogs            AdminActionLog[]
   supportTickets             SupportTicket[]          @relation("UserSupportTickets")
   resolvedTickets            SupportTicket[]          @relation("AdminResolvedTickets")
+  customerQualities          CustomerQuality[]
+  manufacturerQualities      ManufacturerQuality[]
 }
 
 model PasswordResetToken {
@@ -68,6 +70,7 @@ model Customer {
   user              User           @relation(fields: [userId], references: [id], onDelete: Restrict)
   orders            Order[]        @relation("OrderCustomer")
   paymentEntries    PaymentEntry[]
+  qualities         CustomerQuality[]
 
   @@unique([userId, gstNo])
   @@index([userId])
@@ -85,17 +88,20 @@ model Manufacturer {
   updatedAt DateTime @updatedAt
   user      User     @relation(fields: [userId], references: [id], onDelete: Restrict)
   orders    Order[]  @relation("OrderManufacturer")
+  qualities ManufacturerQuality[]
 
   @@index([userId])
 }
 
 model Quality {
-  id       String  @id @default(uuid())
-  userId   String
-  name     String
-  isActive Boolean @default(true)
-  user     User    @relation(fields: [userId], references: [id], onDelete: Restrict)
-  orders   Order[]
+  id                    String                @id @default(uuid())
+  userId                String
+  name                  String
+  isActive              Boolean               @default(true)
+  user                  User                  @relation(fields: [userId], references: [id], onDelete: Restrict)
+  orders                Order[]
+  customerQualities     CustomerQuality[]
+  manufacturerQualities ManufacturerQuality[]
 
   @@unique([userId, name])
   @@index([userId])
@@ -444,4 +450,40 @@ model SupportTicket {
   @@index([category])
   @@index([priority])
   @@index([createdAt])
+}
+
+model CustomerQuality {
+  id         String   @id @default(uuid())
+  userId     String
+  customerId String
+  qualityId  String
+  notes      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  quality    Quality  @relation(fields: [qualityId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, customerId, qualityId])
+  @@index([userId])
+  @@index([customerId])
+  @@index([qualityId])
+}
+
+model ManufacturerQuality {
+  id             String       @id @default(uuid())
+  userId         String
+  manufacturerId String
+  qualityId      String
+  notes          String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  manufacturer   Manufacturer @relation(fields: [manufacturerId], references: [id], onDelete: Cascade)
+  quality        Quality      @relation(fields: [qualityId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, manufacturerId, qualityId])
+  @@index([userId])
+  @@index([manufacturerId])
+  @@index([qualityId])
 }
