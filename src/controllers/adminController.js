@@ -270,6 +270,115 @@ const deleteCollectionRecord = asyncHandler(async (req, res) => {
   return res.json({ message: "record deleted" });
 });
 
+const adminUpdateUserSubscription = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const {
+    plan,
+    billingCycle = "MONTHLY",
+    status = "ACTIVE",
+    durationDays,
+    planExpiresAt,
+    isLifetime,
+    reason,
+  } = req.body;
+
+  const user = await prisma.user.findUnique({
+    where: { id },
+  });
+
+  if (!user) {
+    throw new AppError("User not found", 404);
+  }
+
+  const validPlans = ["TRIAL", "STARTER", "GROWTH", "PREMIUM"];
+  const targetPlan = String(plan || "").toUpperCase();
+  if (!validPlans.includes(targetPlan)) {
+    throw new AppError(`Invalid plan: ${plan}. Allowed: ${validPlans.join(", ")}`, 400);
+  }
+
+  const validCycles = ["MONTHLY", "YEARLY", "LIFETIME"];
+  const targetCycle = String(billingCycle || "MONTHLY").toUpperCase();
+  if (!validCycles.includes(targetCycle)) {
+    throw new AppError(`Invalid cycle: ${billingCycle}`, 400);
+  }
+
+  const validStatuses = ["ACTIVE", "EXPIRED", "CANCELLED"];
+  const targetStatus = String(status || "ACTIVE").toUpperCase();
+  if (!validStatuses.includes(targetStatus)) {
+    throw new AppError(`Invalid status: ${status}`, 400);
+  }
+
+  // Calculate new expiration date
+  let newExpiresAt = null;
+  const now = new Date();
+
+  if (isLifetime || targetCycle === "LIFETIME" || durationDays === "lifetime" || Number(durationDays) >= 36500) {
+    // 100 years lifetime access
+    newExpiresAt = new Date(now.getTime() + 100 * 365 * 24 * 60 * 60 * 1000);
+  } else if (planExpiresAt) {
+    const parsedDate = new Date(planExpiresAt);
+    if (isNaN(parsedDate.getTime())) {
+      throw new AppError("Invalid planExpiresAt date", 400);
+    }
+    newExpiresAt = parsedDate;
+  } else if (durationDays && Number(durationDays) > 0) {
+    newExpiresAt = new Date(now.getTime() + Number(durationDays) * 24 * 60 * 60 * 1000);
+  } else if (targetPlan === "TRIAL") {
+    newExpiresAt = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+  } else {
+    // Default based on cycle: 30 days for monthly, 365 days for yearly
+    const days = targetCycle === "YEARLY" ? 365 : 30;
+    newExpiresAt = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
+  }
+
+  const updateData = {
+    subscriptionPlan: targetPlan,
+    billingCycle: targetCycle === "LIFETIME" ? "YEARLY" : targetCycle,
+    subscriptionStatus: targetStatus,
+    planExpiresAt: newExpiresAt,
+  };
+
+  if (targetPlan === "TRIAL") {
+    updateData.trialEndsAt = newExpiresAt;
+  }
+
+  const updatedUser = await prisma.user.update({
+    where: { id },
+    data: updateData,
+  });
+
+  await logAdminAction(req, {
+    action: "UPDATE_USER_SUBSCRIPTION",
+    collectionKey: "users",
+    recordId: user.id,
+    beforeData: {
+      subscriptionPlan: user.subscriptionPlan,
+      billingCycle: user.billingCycle,
+      subscriptionStatus: user.subscriptionStatus,
+      planExpiresAt: user.planExpiresAt,
+    },
+    afterData: {
+      subscriptionPlan: updatedUser.subscriptionPlan,
+      billingCycle: updatedUser.billingCycle,
+      subscriptionStatus: updatedUser.subscriptionStatus,
+      planExpiresAt: updatedUser.planExpiresAt,
+    },
+    metadata: {
+      reason: reason || "Admin complimentary / manual plan assignment",
+      adminUserId: req.user.userId,
+      isLifetime: Boolean(isLifetime || targetCycle === "LIFETIME"),
+    },
+  });
+
+  const sanitized = { ...updatedUser };
+  delete sanitized.password;
+
+  return res.json({
+    message: `Plan updated to ${targetPlan} successfully.`,
+    user: sanitized,
+  });
+});
+
 module.exports = {
   listCollections,
   listCollectionRecords,
@@ -277,4 +386,5 @@ module.exports = {
   createCollectionRecord,
   updateCollectionRecord,
   deleteCollectionRecord,
+  adminUpdateUserSubscription,
 };
