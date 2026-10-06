@@ -9,6 +9,7 @@ const {
   updateCollectionRecord,
   deleteCollectionRecord,
   adminUpdateUserSubscription,
+  toggleUserFreeAccess,
 } = require("../controllers/adminController");
 const {
   listAllTickets,
@@ -30,6 +31,7 @@ router.patch("/support/tickets/:id", updateTicketStatus);
 router.delete("/support/tickets/:id", deleteTicket);
 
 router.patch("/users/:id/subscription", adminUpdateUserSubscription);
+router.patch("/users/:id/free-access", toggleUserFreeAccess);
 router.get("/collections", listCollections);
 router.get("/collections/:collection", listCollectionRecords);
 router.get("/collections/:collection/:id", getCollectionRecord);

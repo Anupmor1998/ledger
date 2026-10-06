@@ -116,6 +116,24 @@ const getSubscriptionStatus = asyncHandler(async (req, res) => {
     throw new AppError("User not found", 404);
   }
 
+  // If user has complimentary access
+  const isComplimentary =
+    user.subscriptionPlan === "COMPLIMENTARY" ||
+    (user.subscriptionPlan === "PREMIUM" && user.billingCycle === "LIFETIME");
+
+  if (isComplimentary) {
+    return res.json({
+      plan: "COMPLIMENTARY",
+      isComplimentary: true,
+      hasFullAccess: true,
+      billingCycle: "LIFETIME",
+      status: "ACTIVE",
+      daysRemaining: 99999,
+      expiresAt: null,
+      razorpayKeyId: RAZORPAY_KEY_ID || null,
+    });
+  }
+
   // Calculate remaining days
   const now = new Date();
   let daysRemaining = 0;
@@ -137,6 +155,8 @@ const getSubscriptionStatus = asyncHandler(async (req, res) => {
 
   return res.json({
     plan: user.subscriptionPlan || "TRIAL",
+    isComplimentary: false,
+    hasFullAccess: ["GROWTH", "PREMIUM", "COMPLIMENTARY"].includes(user.subscriptionPlan),
     billingCycle: user.billingCycle || "MONTHLY",
     status: user.subscriptionStatus || "ACTIVE",
     daysRemaining,

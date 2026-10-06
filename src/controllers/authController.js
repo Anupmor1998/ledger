@@ -23,6 +23,11 @@ function buildSessionUser(user) {
     businessSubtitle: user.businessSubtitle || null,
     contactPhone: user.contactPhone || null,
     businessAddress: user.businessAddress || null,
+    subscriptionPlan: user.subscriptionPlan || "TRIAL",
+    isComplimentary:
+      user.subscriptionPlan === "COMPLIMENTARY" ||
+      (user.subscriptionPlan === "PREMIUM" && user.billingCycle === "LIFETIME"),
+    subscriptionStatus: user.subscriptionStatus || "ACTIVE",
     createdAt: user.createdAt,
   };
 }
@@ -136,7 +141,28 @@ const login = asyncHandler(async (req, res) => {
     throw new AppError("email and password are required", 400);
   }
 
-  const user = await prisma.user.findUnique({ where: { email } });
+  let user;
+  try {
+    user = await prisma.user.findUnique({ where: { email } });
+  } catch (_err) {
+    user = await prisma.user.findUnique({
+      where: { email },
+      select: {
+        id: true,
+        email: true,
+        password: true,
+        name: true,
+        role: true,
+        theme: true,
+        selectedFinancialYearStart: true,
+        firmName: true,
+        businessSubtitle: true,
+        contactPhone: true,
+        businessAddress: true,
+        createdAt: true,
+      },
+    });
+  }
 
   if (!user) {
     throw new AppError("invalid credentials", 401);
