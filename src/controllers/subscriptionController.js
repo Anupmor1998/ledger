@@ -3,6 +3,7 @@ const AppError = require("../utils/appError");
 const asyncHandler = require("../utils/asyncHandler");
 const { getRazorpayInstance, verifyRazorpaySignature, RAZORPAY_KEY_ID } = require("../config/razorpay");
 const logger = require("../utils/logger");
+const { sendSubscriptionInvoicePdf } = require("../utils/invoicePdf");
 
 const PLAN_PRICING = {
   STARTER: {
@@ -360,6 +361,33 @@ const verifySubscriptionPayment = asyncHandler(async (req, res) => {
     throw new AppError("Subscription order record not found", 404);
   }
 
+  // Idempotency check: if this order was already processed and verified, return the current status
+  if (paymentRecord.status === "SUCCESS") {
+    const existingUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        firmName: true,
+        subscriptionPlan: true,
+        billingCycle: true,
+        subscriptionStatus: true,
+        planExpiresAt: true,
+      },
+    });
+
+    return res.json({
+      success: true,
+      message: `Plan ${paymentRecord.plan} is already active.`,
+      plan: existingUser.subscriptionPlan,
+      billingCycle: existingUser.billingCycle,
+      expiresAt: existingUser.planExpiresAt,
+      invoiceNumber: paymentRecord.invoiceNumber,
+      user: existingUser,
+    });
+  }
+
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: {
@@ -392,37 +420,37 @@ const verifySubscriptionPayment = asyncHandler(async (req, res) => {
 
   const invoiceNumber = `SB-${now.getFullYear()}-${Date.now().toString().slice(-6)}`;
 
-  // Update payment record to SUCCESS
-  await prisma.subscriptionPayment.update({
-    where: { id: paymentRecord.id },
-    data: {
-      paymentId: razorpay_payment_id,
-      status: "SUCCESS",
-      invoiceNumber,
-      paidAt: now,
-    },
-  });
-
-  // Update user active subscription
-  const updatedUser = await prisma.user.update({
-    where: { id: userId },
-    data: {
-      subscriptionPlan: paymentRecord.plan,
-      billingCycle: paymentRecord.billingCycle,
-      subscriptionStatus: "ACTIVE",
-      planExpiresAt: newExpiresAt,
-    },
-    select: {
-      id: true,
-      email: true,
-      name: true,
-      firmName: true,
-      subscriptionPlan: true,
-      billingCycle: true,
-      subscriptionStatus: true,
-      planExpiresAt: true,
-    },
-  });
+  // Atomic database transaction: ensure both payment update and user upgrade succeed together
+  const [updatedPayment, updatedUser] = await prisma.$transaction([
+    prisma.subscriptionPayment.update({
+      where: { id: paymentRecord.id },
+      data: {
+        paymentId: razorpay_payment_id,
+        status: "SUCCESS",
+        invoiceNumber,
+        paidAt: now,
+      },
+    }),
+    prisma.user.update({
+      where: { id: userId },
+      data: {
+        subscriptionPlan: paymentRecord.plan,
+        billingCycle: paymentRecord.billingCycle,
+        subscriptionStatus: "ACTIVE",
+        planExpiresAt: newExpiresAt,
+      },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        firmName: true,
+        subscriptionPlan: true,
+        billingCycle: true,
+        subscriptionStatus: true,
+        planExpiresAt: true,
+      },
+    }),
+  ]);
 
   logger.info("Subscription payment verified successfully", {
     feature: "subscription",
@@ -470,10 +498,87 @@ const getSubscriptionInvoices = asyncHandler(async (req, res) => {
   return res.json({ invoices });
 });
 
+/**
+ * POST /api/subscription/fail-order
+ * Mark a pending subscription order as FAILED when Razorpay checkout reports failure
+ */
+const failSubscriptionOrder = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+  const { orderId, paymentId, reason } = req.body;
+
+  if (!orderId) {
+    throw new AppError("Order ID is required", 400);
+  }
+
+  const paymentRecord = await prisma.subscriptionPayment.findUnique({
+    where: { orderId },
+  });
+
+  if (!paymentRecord || paymentRecord.userId !== userId) {
+    throw new AppError("Subscription order record not found", 404);
+  }
+
+  // Only transition if not already successful
+  if (paymentRecord.status !== "SUCCESS") {
+    await prisma.subscriptionPayment.update({
+      where: { id: paymentRecord.id },
+      data: {
+        status: "FAILED",
+        paymentId: paymentId || paymentRecord.paymentId,
+      },
+    });
+
+    logger.info("Subscription payment marked as failed", {
+      feature: "subscription",
+      userId,
+      orderId,
+      reason,
+    });
+  }
+
+  return res.json({ success: true, status: "FAILED" });
+});
+
+/**
+ * GET /api/subscription/invoices/:id/download
+ * Download a branded Tax Invoice PDF for a successful subscription payment
+ */
+const downloadSubscriptionInvoice = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+  const { id } = req.params;
+
+  const payment = await prisma.subscriptionPayment.findUnique({
+    where: { id },
+    include: {
+      user: {
+        select: {
+          id: true,
+          name: true,
+          firmName: true,
+          email: true,
+          contactPhone: true,
+        },
+      },
+    },
+  });
+
+  if (!payment || payment.userId !== userId) {
+    throw new AppError("Invoice not found", 404);
+  }
+
+  if (payment.status !== "SUCCESS") {
+    throw new AppError("Invoices are only generated for successful payments", 400);
+  }
+
+  await sendSubscriptionInvoicePdf(res, payment);
+});
+
 module.exports = {
   getSubscriptionStatus,
   previewSubscriptionOrder,
   createSubscriptionOrder,
   verifySubscriptionPayment,
+  failSubscriptionOrder,
   getSubscriptionInvoices,
+  downloadSubscriptionInvoice,
 };
