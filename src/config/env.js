@@ -6,6 +6,8 @@ const FRONTEND_URL = process.env.FRONTEND_URL;
 const GMAIL_SMTP_EMAIL = process.env.GMAIL_SMTP_EMAIL;
 const GMAIL_SMTP_APP_PASSWORD = process.env.GMAIL_SMTP_APP_PASSWORD;
 const PASSWORD_RESET_FROM_EMAIL = process.env.PASSWORD_RESET_FROM_EMAIL;
+const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || "";
+const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || "";
 const CORS_ORIGINS = (process.env.CORS_ORIGINS || "")
   .split(",")
   .map((origin) => origin.trim())
@@ -21,4 +23,6 @@ module.exports = {
   GMAIL_SMTP_EMAIL,
   GMAIL_SMTP_APP_PASSWORD,
   PASSWORD_RESET_FROM_EMAIL,
+  RAZORPAY_KEY_ID,
+  RAZORPAY_KEY_SECRET,
 };

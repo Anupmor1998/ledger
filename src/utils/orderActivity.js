@@ -23,6 +23,7 @@ const AUDIT_FIELDS = [
   "remarks",
   "customerRemark",
   "manufacturerRemark",
+  "manufacturerFirmName",
   "dyeingGuarantees",
   "paymentDueOn",
   "deliveryDateFrom",

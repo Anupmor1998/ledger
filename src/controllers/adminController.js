@@ -53,12 +53,36 @@ function normalizeJsonPayload(payload, config) {
   delete nextPayload.id;
   delete nextPayload.createdAt;
   delete nextPayload.updatedAt;
+  delete nextPayload.userName;
+  delete nextPayload.userEmail;
+  delete nextPayload.userFirmName;
+  delete nextPayload.userSubscriptionPlan;
+  delete nextPayload.userBillingCycle;
+  delete nextPayload.user;
 
   (config.hiddenFields || []).forEach((field) => {
     delete nextPayload[field];
   });
 
   return nextPayload;
+}
+
+function formatRecordForResponse(item, config) {
+  const stripped = stripHiddenFields(item, config);
+  if (!stripped || typeof stripped !== "object") {
+    return stripped;
+  }
+  if (config.key === "subscriptionPayments" && stripped.user) {
+    return {
+      ...stripped,
+      userName: stripped.user.name || stripped.user.email || "-",
+      userEmail: stripped.user.email || "-",
+      userFirmName: stripped.user.firmName || "-",
+      userSubscriptionPlan: stripped.user.subscriptionPlan || "TRIAL",
+      userBillingCycle: stripped.user.billingCycle || "MONTHLY",
+    };
+  }
+  return stripped;
 }
 
 function buildSearchWhere(config, search, searchField) {
@@ -81,6 +105,21 @@ function buildSearchWhere(config, search, searchField) {
       .map((fieldConfig) => {
         if (!fieldConfig?.value) {
           return null;
+        }
+
+        if (fieldConfig.relation) {
+          const parts = fieldConfig.relation.split(".");
+          if (parts.length === 2) {
+            const [relName, relProp] = parts;
+            return {
+              [relName]: {
+                [relProp]: {
+                  contains: term,
+                  mode: "insensitive",
+                },
+              },
+            };
+          }
         }
 
         if (fieldConfig.type === "number") {
@@ -155,19 +194,24 @@ const listCollectionRecords = asyncHandler(async (req, res) => {
   const sortOrder = String(req.query.sortOrder || "desc").trim();
 
   const where = buildSearchWhere(config, search, searchField);
+  const findOptions = {
+    where,
+    orderBy: buildOrderBy(config, sortBy, sortOrder),
+    skip: (page - 1) * limit,
+    take: limit,
+  };
+  if (config.include) {
+    findOptions.include = config.include;
+  }
+
   const [items, total] = await Promise.all([
-    delegate.findMany({
-      where,
-      orderBy: buildOrderBy(config, sortBy, sortOrder),
-      skip: (page - 1) * limit,
-      take: limit,
-    }),
+    delegate.findMany(findOptions),
     delegate.count({ where }),
   ]);
 
   return res.json({
     collection: config,
-    items: items.map((item) => stripHiddenFields(item, config)),
+    items: items.map((item) => formatRecordForResponse(item, config)),
     pagination: {
       page,
       limit,
@@ -181,14 +225,19 @@ const getCollectionRecord = asyncHandler(async (req, res) => {
   const { collection, id } = req.params;
   const { config, delegate } = getDelegate(collection);
 
-  const record = await delegate.findUnique({ where: { id } });
+  const findOptions = { where: { id } };
+  if (config.include) {
+    findOptions.include = config.include;
+  }
+
+  const record = await delegate.findUnique(findOptions);
   if (!record) {
     throw new AppError("record not found", 404);
   }
 
   return res.json({
     collection: config,
-    item: stripHiddenFields(record, config),
+    item: formatRecordForResponse(record, config),
   });
 });
 
@@ -201,7 +250,10 @@ const createCollectionRecord = asyncHandler(async (req, res) => {
   }
 
   const data = normalizeJsonPayload(req.body, config);
-  const created = await delegate.create({ data });
+  const created = await delegate.create({
+    data,
+    ...(config.include ? { include: config.include } : {}),
+  });
   await logAdminAction(req, {
     action: "CREATE",
     collectionKey: config.key,
@@ -211,7 +263,7 @@ const createCollectionRecord = asyncHandler(async (req, res) => {
 
   return res.status(201).json({
     collection: config,
-    item: stripHiddenFields(created, config),
+    item: formatRecordForResponse(created, config),
   });
 });
 
@@ -232,6 +284,7 @@ const updateCollectionRecord = asyncHandler(async (req, res) => {
   const updated = await delegate.update({
     where: { id },
     data,
+    ...(config.include ? { include: config.include } : {}),
   });
   await logAdminAction(req, {
     action: "UPDATE",
@@ -243,7 +296,7 @@ const updateCollectionRecord = asyncHandler(async (req, res) => {
 
   return res.json({
     collection: config,
-    item: stripHiddenFields(updated, config),
+    item: formatRecordForResponse(updated, config),
   });
 });
 
@@ -270,6 +323,188 @@ const deleteCollectionRecord = asyncHandler(async (req, res) => {
   return res.json({ message: "record deleted" });
 });
 
+const adminUpdateUserSubscription = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const {
+    plan,
+    billingCycle = "MONTHLY",
+    status = "ACTIVE",
+    durationDays,
+    planExpiresAt,
+    isLifetime,
+    reason,
+  } = req.body;
+
+  const user = await prisma.user.findUnique({
+    where: { id },
+  });
+
+  if (!user) {
+    throw new AppError("User not found", 404);
+  }
+
+  const validPlans = ["TRIAL", "STARTER", "GROWTH", "PREMIUM"];
+  const targetPlan = String(plan || "").toUpperCase();
+  if (!validPlans.includes(targetPlan)) {
+    throw new AppError(`Invalid plan: ${plan}. Allowed: ${validPlans.join(", ")}`, 400);
+  }
+
+  const validCycles = ["MONTHLY", "YEARLY", "LIFETIME"];
+  const targetCycle = String(billingCycle || "MONTHLY").toUpperCase();
+  if (!validCycles.includes(targetCycle)) {
+    throw new AppError(`Invalid cycle: ${billingCycle}`, 400);
+  }
+
+  const validStatuses = ["ACTIVE", "EXPIRED", "CANCELLED"];
+  const targetStatus = String(status || "ACTIVE").toUpperCase();
+  if (!validStatuses.includes(targetStatus)) {
+    throw new AppError(`Invalid status: ${status}`, 400);
+  }
+
+  // Calculate new expiration date
+  let newExpiresAt = null;
+  const now = new Date();
+
+  if (isLifetime || targetCycle === "LIFETIME" || durationDays === "lifetime" || Number(durationDays) >= 36500) {
+    // 100 years lifetime access
+    newExpiresAt = new Date(now.getTime() + 100 * 365 * 24 * 60 * 60 * 1000);
+  } else if (planExpiresAt) {
+    const parsedDate = new Date(planExpiresAt);
+    if (isNaN(parsedDate.getTime())) {
+      throw new AppError("Invalid planExpiresAt date", 400);
+    }
+    newExpiresAt = parsedDate;
+  } else if (durationDays && Number(durationDays) > 0) {
+    newExpiresAt = new Date(now.getTime() + Number(durationDays) * 24 * 60 * 60 * 1000);
+  } else if (targetPlan === "TRIAL") {
+    newExpiresAt = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+  } else {
+    // Default based on cycle: 30 days for monthly, 365 days for yearly
+    const days = targetCycle === "YEARLY" ? 365 : 30;
+    newExpiresAt = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
+  }
+
+  const updateData = {
+    subscriptionPlan: targetPlan,
+    billingCycle: targetCycle === "LIFETIME" ? "YEARLY" : targetCycle,
+    subscriptionStatus: targetStatus,
+    planExpiresAt: newExpiresAt,
+  };
+
+  if (targetPlan === "TRIAL") {
+    updateData.trialEndsAt = newExpiresAt;
+  }
+
+  const updatedUser = await prisma.user.update({
+    where: { id },
+    data: updateData,
+  });
+
+  await logAdminAction(req, {
+    action: "UPDATE_USER_SUBSCRIPTION",
+    collectionKey: "users",
+    recordId: user.id,
+    beforeData: {
+      subscriptionPlan: user.subscriptionPlan,
+      billingCycle: user.billingCycle,
+      subscriptionStatus: user.subscriptionStatus,
+      planExpiresAt: user.planExpiresAt,
+    },
+    afterData: {
+      subscriptionPlan: updatedUser.subscriptionPlan,
+      billingCycle: updatedUser.billingCycle,
+      subscriptionStatus: updatedUser.subscriptionStatus,
+      planExpiresAt: updatedUser.planExpiresAt,
+    },
+    metadata: {
+      reason: reason || "Admin complimentary / manual plan assignment",
+      adminUserId: req.user.userId,
+      isLifetime: Boolean(isLifetime || targetCycle === "LIFETIME"),
+    },
+  });
+
+  const sanitized = { ...updatedUser };
+  delete sanitized.password;
+
+  return res.json({
+    message: `Plan updated to ${targetPlan} successfully.`,
+    user: sanitized,
+  });
+});
+
+const toggleUserFreeAccess = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { enabled } = req.body;
+
+  const user = await prisma.user.findUnique({
+    where: { id },
+  });
+
+  if (!user) {
+    throw new AppError("User not found", 404);
+  }
+
+  // If enabled is not a boolean, toggle the current state
+  const isCurrentlyFree =
+    user.subscriptionPlan === "COMPLIMENTARY" ||
+    (user.subscriptionPlan === "PREMIUM" && user.billingCycle === "LIFETIME");
+  const shouldEnable = typeof enabled === "boolean" ? enabled : !isCurrentlyFree;
+
+  const updateData = shouldEnable
+    ? {
+        subscriptionPlan: "COMPLIMENTARY",
+        billingCycle: "LIFETIME",
+        subscriptionStatus: "ACTIVE",
+        planExpiresAt: null,
+      }
+    : {
+        subscriptionPlan: "TRIAL",
+        billingCycle: "MONTHLY",
+        subscriptionStatus: "ACTIVE",
+        planExpiresAt: null,
+        trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+      };
+
+  const updatedUser = await prisma.user.update({
+    where: { id },
+    data: updateData,
+  });
+
+  await logAdminAction(req, {
+    action: shouldEnable ? "ENABLE_FREE_ACCESS" : "DISABLE_FREE_ACCESS",
+    collectionKey: "users",
+    recordId: user.id,
+    beforeData: {
+      subscriptionPlan: user.subscriptionPlan,
+      billingCycle: user.billingCycle,
+      subscriptionStatus: user.subscriptionStatus,
+      planExpiresAt: user.planExpiresAt,
+    },
+    afterData: {
+      subscriptionPlan: updatedUser.subscriptionPlan,
+      billingCycle: updatedUser.billingCycle,
+      subscriptionStatus: updatedUser.subscriptionStatus,
+      planExpiresAt: updatedUser.planExpiresAt,
+    },
+    metadata: {
+      adminUserId: req.user.userId,
+      isComplimentary: shouldEnable,
+    },
+  });
+
+  const sanitized = { ...updatedUser };
+  delete sanitized.password;
+
+  return res.json({
+    success: true,
+    isComplimentary: shouldEnable,
+    message: shouldEnable
+      ? `Free full access enabled for ${user.name || user.email}. They will not be charged anything.`
+      : `Free access disabled for ${user.name || user.email}. Reverted to standard plan.`,
+    user: sanitized,
+  });
+});
+
 module.exports = {
   listCollections,
   listCollectionRecords,
@@ -277,4 +512,6 @@ module.exports = {
   createCollectionRecord,
   updateCollectionRecord,
   deleteCollectionRecord,
+  adminUpdateUserSubscription,
+  toggleUserFreeAccess,
 };
