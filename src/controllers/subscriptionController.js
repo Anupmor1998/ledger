@@ -140,12 +140,20 @@ const getSubscriptionStatus = asyncHandler(async (req, res) => {
   let expiresAt = null;
 
   if (user.subscriptionPlan === "TRIAL") {
-    // 14 days from trialEndsAt or createdAt
-    const trialEnd = user.trialEndsAt
-      ? new Date(user.trialEndsAt)
-      : new Date(new Date(user.createdAt).getTime() + 14 * 24 * 60 * 60 * 1000);
+    let trialEnd = user.trialEndsAt ? new Date(user.trialEndsAt) : null;
+
+    // For pre-existing accounts accessing with an active session without re-logging in:
+    // Initialize a fresh 14 days and persist to database
+    if (!trialEnd && !user.planExpiresAt) {
+      trialEnd = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+      prisma.user.update({
+        where: { id: userId },
+        data: { trialEndsAt: trialEnd },
+      }).catch(() => {});
+    }
+
     expiresAt = trialEnd;
-    const diff = trialEnd.getTime() - now.getTime();
+    const diff = trialEnd ? trialEnd.getTime() - now.getTime() : 0;
     daysRemaining = Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
   } else if (user.planExpiresAt) {
     expiresAt = new Date(user.planExpiresAt);

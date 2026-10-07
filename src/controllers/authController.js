@@ -28,6 +28,8 @@ function buildSessionUser(user) {
       user.subscriptionPlan === "COMPLIMENTARY" ||
       (user.subscriptionPlan === "PREMIUM" && user.billingCycle === "LIFETIME"),
     subscriptionStatus: user.subscriptionStatus || "ACTIVE",
+    trialEndsAt: user.trialEndsAt || null,
+    planExpiresAt: user.planExpiresAt || null,
     createdAt: user.createdAt,
   };
 }
@@ -61,6 +63,7 @@ const signup = asyncHandler(async (req, res) => {
   }
 
   const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+  const trialEndsAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
   const user = await prisma.user.create({
     data: {
       email,
@@ -68,6 +71,7 @@ const signup = asyncHandler(async (req, res) => {
       password: passwordHash,
       role: "USER",
       selectedFinancialYearStart: getFinancialYearStartYear(),
+      trialEndsAt,
     },
     select: {
       id: true,
@@ -80,6 +84,11 @@ const signup = asyncHandler(async (req, res) => {
       businessSubtitle: true,
       contactPhone: true,
       businessAddress: true,
+      subscriptionPlan: true,
+      billingCycle: true,
+      subscriptionStatus: true,
+      trialEndsAt: true,
+      planExpiresAt: true,
       createdAt: true,
     },
   });
@@ -172,6 +181,26 @@ const login = asyncHandler(async (req, res) => {
 
   if (!isValid) {
     throw new AppError("invalid credentials", 401);
+  }
+
+  // If user is on TRIAL and trialEndsAt is not set (e.g. account created before the pricing module),
+  // start their fresh 14-day trial upon this login and save it to the database:
+  if (
+    user.role !== "ADMIN" &&
+    (user.subscriptionPlan === "TRIAL" || !user.subscriptionPlan) &&
+    !user.trialEndsAt &&
+    !user.planExpiresAt
+  ) {
+    const freshTrialEnd = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+    try {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { trialEndsAt: freshTrialEnd },
+      });
+      user.trialEndsAt = freshTrialEnd;
+    } catch (_err) {
+      // Safe fallback
+    }
   }
 
   const token = createToken(user);
