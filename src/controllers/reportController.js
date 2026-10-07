@@ -212,6 +212,7 @@ function buildFinalTotalRows(
     date: "",
     partyFirmName: "",
     partyName: "",
+    manufacturerFirmName: "",
     paymentStatus: "",
   };
 
@@ -496,6 +497,7 @@ function buildReportColumns(reportType) {
       ? [
           { header: "Customer Firm", key: "partyFirmName", width: 24 },
           { header: "Customer Name", key: "partyName", width: 24 },
+          { header: "Manufacturer Firm", key: "manufacturerFirmName", width: 24 },
         ]
       : [
           { header: "Manufacturer Firm", key: "partyFirmName", width: 24 },
@@ -525,6 +527,13 @@ function orderToReportRow(order, reportType, paymentStatusFilter) {
       paymentStatusFilter === REPORT_PAYMENT_STATUS.ALL) &&
     isPaid;
 
+  const resolvedManufacturerFirm =
+    order.manufacturerFirmName || order.manufacturer?.firmName || "";
+  const partyFirmName =
+    reportType === "manufacturer"
+      ? party?.firmName || ""
+      : resolvedManufacturerFirm;
+
   return {
     amount: roundCurrency(order.commissionAmount ?? 0),
     lot: computeLotValue(order),
@@ -533,8 +542,9 @@ function orderToReportRow(order, reportType, paymentStatusFilter) {
     rate: round2(order.rate).toFixed(2),
     orderId: order.orderNo,
     date: formatCellDate(order.orderDate),
-    partyFirmName: party?.firmName || "",
+    partyFirmName,
     partyName: party?.name || "",
+    manufacturerFirmName: resolvedManufacturerFirm,
     paymentStatus,
     __bold: shouldBold,
   };
@@ -758,6 +768,7 @@ function buildFinalTotalRow(finalTotals, label = "") {
     date: "",
     partyFirmName: "",
     partyName: "",
+    manufacturerFirmName: "",
     paymentStatus: "",
   };
 }

@@ -80,6 +80,17 @@ function roundCurrency(value) {
   return Math.round(Number(value || 0));
 }
 
+function normalizeFirmNames(value) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const parts = String(value)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return parts.length ? parts.join(", ") : null;
+}
+
 function needsLotMetersBasis(quantityUnit, customerCommissionConfig) {
   const normalizedUnit = String(quantityUnit || "").toUpperCase();
   const commissionBase = String(customerCommissionConfig?.commissionBase || "PERCENT").toUpperCase();
@@ -585,6 +596,7 @@ const createOrder = asyncHandler(async (req, res) => {
   const {
     customerId,
     manufacturerId,
+    manufacturerFirmName,
     rate,
     quantity,
     quantityUnit,
@@ -690,6 +702,7 @@ const createOrder = asyncHandler(async (req, res) => {
             remarks: remarks?.trim() || null,
             customerRemark: customerRemark?.trim() || null,
             manufacturerRemark: manufacturerRemark?.trim() || null,
+            manufacturerFirmName: normalizeFirmNames(manufacturerFirmName),
             dyeingGuarantees: Boolean(dyeingGuarantees),
             paymentDueOn: paymentDueOn !== undefined ? Number(paymentDueOn) : null,
             deliveryDateFrom: parsedDeliveryDateFrom,
@@ -799,6 +812,7 @@ function buildOrderSearchClause(token) {
     orConditions.push(
       { customer: { firmName: { contains: normalizedToken, mode: "insensitive" } } },
       { customer: { name: { contains: normalizedToken, mode: "insensitive" } } },
+      { manufacturerFirmName: { contains: normalizedToken, mode: "insensitive" } },
       { manufacturer: { firmName: { contains: normalizedToken, mode: "insensitive" } } },
       { manufacturer: { name: { contains: normalizedToken, mode: "insensitive" } } },
       { quality: { name: { contains: normalizedToken, mode: "insensitive" } } },
@@ -854,7 +868,12 @@ function buildOrderSearchWhere(searchField, search) {
     case "manufacturerName":
       return { manufacturer: { name: { contains: normalizedSearch, mode: "insensitive" } } };
     case "manufacturerFirmName":
-      return { manufacturer: { firmName: { contains: normalizedSearch, mode: "insensitive" } } };
+      return {
+        OR: [
+          { manufacturerFirmName: { contains: normalizedSearch, mode: "insensitive" } },
+          { manufacturer: { firmName: { contains: normalizedSearch, mode: "insensitive" } } },
+        ],
+      };
     case "qualityName":
       return { quality: { name: { contains: normalizedSearch, mode: "insensitive" } } };
     case "quantity":
@@ -1363,11 +1382,8 @@ const updateOrder = asyncHandler(async (req, res) => {
           updateData.manufacturerId = manufacturerId;
         }
         if (manufacturerFirmName !== undefined) {
-          const firmName = String(manufacturerFirmName || "").trim();
-          await tx.manufacturer.update({
-            where: { id: existing.manufacturerId },
-            data: { firmName: firmName || null },
-          });
+          const firmName = normalizeFirmNames(manufacturerFirmName);
+          updateData.manufacturerFirmName = firmName || null;
         }
         if (rate !== undefined) {
           updateData.rate = round2(Number(rate));

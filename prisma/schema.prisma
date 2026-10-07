@@ -152,6 +152,7 @@ model Order {
   remarks                   String?
   customerRemark            String?
   manufacturerRemark        String?
+  manufacturerFirmName      String?
   dyeingGuarantees          Boolean                  @default(false)
   paymentDueOn              Int?
   deliveryDateFrom          DateTime?
