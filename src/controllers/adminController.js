@@ -447,13 +447,14 @@ const toggleUserFreeAccess = asyncHandler(async (req, res) => {
   // If enabled is not a boolean, toggle the current state
   const isCurrentlyFree =
     user.subscriptionPlan === "COMPLIMENTARY" ||
-    (user.subscriptionPlan === "PREMIUM" && user.billingCycle === "LIFETIME");
+    (user.subscriptionPlan === "PREMIUM" && user.billingCycle === "LIFETIME") ||
+    (user.subscriptionPlan === "PREMIUM" && user.planExpiresAt === null && user.subscriptionStatus === "ACTIVE");
   const shouldEnable = typeof enabled === "boolean" ? enabled : !isCurrentlyFree;
 
   const updateData = shouldEnable
     ? {
-        subscriptionPlan: "COMPLIMENTARY",
-        billingCycle: "LIFETIME",
+        subscriptionPlan: "PREMIUM",
+        billingCycle: "YEARLY",
         subscriptionStatus: "ACTIVE",
         planExpiresAt: null,
       }
@@ -471,7 +472,7 @@ const toggleUserFreeAccess = asyncHandler(async (req, res) => {
   });
 
   await logAdminAction(req, {
-    action: shouldEnable ? "ENABLE_FREE_ACCESS" : "DISABLE_FREE_ACCESS",
+    action: shouldEnable ? "ENABLE_VIP_ACCESS" : "DISABLE_VIP_ACCESS",
     collectionKey: "users",
     recordId: user.id,
     beforeData: {
@@ -488,7 +489,7 @@ const toggleUserFreeAccess = asyncHandler(async (req, res) => {
     },
     metadata: {
       adminUserId: req.user.userId,
-      isComplimentary: shouldEnable,
+      isVipPremium: shouldEnable,
     },
   });
 
@@ -498,9 +499,10 @@ const toggleUserFreeAccess = asyncHandler(async (req, res) => {
   return res.json({
     success: true,
     isComplimentary: shouldEnable,
+    isVip: shouldEnable,
     message: shouldEnable
-      ? `Free full access enabled for ${user.name || user.email}. They will not be charged anything.`
-      : `Free access disabled for ${user.name || user.email}. Reverted to standard plan.`,
+      ? `VIP Premium Yearly access enabled for ${user.name || user.email}.`
+      : `VIP access disabled for ${user.name || user.email}. Reverted to trial.`,
     user: sanitized,
   });
 });

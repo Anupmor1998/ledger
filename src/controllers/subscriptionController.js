@@ -117,20 +117,23 @@ const getSubscriptionStatus = asyncHandler(async (req, res) => {
     throw new AppError("User not found", 404);
   }
 
-  // If user has complimentary access
-  const isComplimentary =
+  // If user has complimentary / VIP access, represent as PREMIUM on YEARLY billing cycle with never-expiring validity
+  const isVipNeverExpires =
     user.subscriptionPlan === "COMPLIMENTARY" ||
-    (user.subscriptionPlan === "PREMIUM" && user.billingCycle === "LIFETIME");
+    (user.subscriptionPlan === "PREMIUM" && user.billingCycle === "LIFETIME") ||
+    (user.subscriptionPlan === "PREMIUM" && !user.planExpiresAt);
 
-  if (isComplimentary) {
+  if (isVipNeverExpires) {
+    const rollingExpiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
     return res.json({
-      plan: "COMPLIMENTARY",
-      isComplimentary: true,
+      plan: "PREMIUM",
+      isComplimentary: false,
+      isVip: true,
       hasFullAccess: true,
-      billingCycle: "LIFETIME",
+      billingCycle: "YEARLY",
       status: "ACTIVE",
-      daysRemaining: 99999,
-      expiresAt: null,
+      daysRemaining: 365,
+      expiresAt: rollingExpiresAt.toISOString(),
       razorpayKeyId: RAZORPAY_KEY_ID || null,
     });
   }

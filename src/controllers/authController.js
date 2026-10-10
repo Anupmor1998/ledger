@@ -23,13 +23,19 @@ function buildSessionUser(user) {
     businessSubtitle: user.businessSubtitle || null,
     contactPhone: user.contactPhone || null,
     businessAddress: user.businessAddress || null,
-    subscriptionPlan: user.subscriptionPlan || "TRIAL",
-    isComplimentary:
-      user.subscriptionPlan === "COMPLIMENTARY" ||
-      (user.subscriptionPlan === "PREMIUM" && user.billingCycle === "LIFETIME"),
+    subscriptionPlan:
+      user.subscriptionPlan === "COMPLIMENTARY" ? "PREMIUM" : (user.subscriptionPlan || "TRIAL"),
+    billingCycle:
+      user.subscriptionPlan === "COMPLIMENTARY" || (user.subscriptionPlan === "PREMIUM" && !user.planExpiresAt)
+        ? "YEARLY"
+        : (user.billingCycle || "MONTHLY"),
+    isComplimentary: false,
     subscriptionStatus: user.subscriptionStatus || "ACTIVE",
     trialEndsAt: user.trialEndsAt || null,
-    planExpiresAt: user.planExpiresAt || null,
+    planExpiresAt:
+      user.subscriptionPlan === "COMPLIMENTARY" || (user.subscriptionPlan === "PREMIUM" && !user.planExpiresAt)
+        ? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString()
+        : (user.planExpiresAt || null),
     createdAt: user.createdAt,
   };
 }
