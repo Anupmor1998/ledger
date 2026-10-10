@@ -55,6 +55,62 @@ function isSameManufacturerCandidate(left, right) {
   return Boolean(leftName && rightName && !leftFirmName && !rightFirmName && leftName === rightName);
 }
 
+const COMMISSION_BASE = {
+  PERCENT: "PERCENT",
+  LOT: "LOT",
+};
+
+function buildManufacturerCommissionData(body, existing = null) {
+  const rawBase =
+    body.commissionBase !== undefined
+      ? body.commissionBase
+      : existing?.commissionBase || COMMISSION_BASE.LOT;
+  const commissionBase = String(rawBase).trim().toUpperCase();
+
+  if (!Object.values(COMMISSION_BASE).includes(commissionBase)) {
+    throw new AppError("commissionBase must be one of: PERCENT, LOT", 400);
+  }
+
+  if (commissionBase === COMMISSION_BASE.PERCENT) {
+    const rawPercent =
+      body.commissionPercent !== undefined
+        ? body.commissionPercent
+        : (existing?.commissionPercent ?? 0);
+    const commissionPercent =
+      rawPercent === null || rawPercent === "" ? 0 : Number(rawPercent);
+
+    if (!Number.isFinite(commissionPercent) || commissionPercent < 0) {
+      throw new AppError("commissionPercent must be a non-negative number", 400);
+    }
+
+    return {
+      commissionBase,
+      commissionPercent,
+      commissionLotRate: null,
+    };
+  }
+
+  const rawLotRate =
+    body.commissionLotRate !== undefined
+      ? body.commissionLotRate
+      : (existing?.commissionLotRate ?? 0);
+  const commissionLotRate =
+    rawLotRate === null || rawLotRate === "" ? 0 : Number(rawLotRate);
+
+  if (!Number.isFinite(commissionLotRate) || commissionLotRate < 0) {
+    throw new AppError(
+      "commissionLotRate must be a non-negative number when commissionBase is LOT",
+      400
+    );
+  }
+
+  return {
+    commissionBase,
+    commissionPercent: 0,
+    commissionLotRate,
+  };
+}
+
 function mergeManufacturerFields(base, incoming) {
   return {
     firmName: base.firmName || incoming.firmName || null,
@@ -62,6 +118,15 @@ function mergeManufacturerFields(base, incoming) {
     address: base.address || incoming.address || null,
     email: base.email || incoming.email || null,
     phone: base.phone || incoming.phone || null,
+    commissionBase: base.commissionBase || incoming.commissionBase || COMMISSION_BASE.LOT,
+    commissionPercent:
+      base.commissionPercent !== undefined && base.commissionPercent !== null
+        ? base.commissionPercent
+        : incoming.commissionPercent ?? 0,
+    commissionLotRate:
+      base.commissionLotRate !== undefined && base.commissionLotRate !== null
+        ? base.commissionLotRate
+        : incoming.commissionLotRate ?? 0,
   };
 }
 
@@ -85,17 +150,42 @@ function buildManufacturerSearchWhere(searchField, search) {
           mode: "insensitive",
         },
       };
+    case "commissionBase": {
+      const commissionBase = normalizedSearch.toUpperCase();
+      if (!Object.values(COMMISSION_BASE).includes(commissionBase)) {
+        return { id: "__no_manufacturer_search_match__" };
+      }
+      return { commissionBase };
+    }
+    case "commissionPercent":
+    case "commissionLotRate": {
+      const numericValue = Number(normalizedSearch);
+      if (!Number.isFinite(numericValue)) {
+        return { id: "__no_manufacturer_search_match__" };
+      }
+      return { [selectedField]: numericValue };
+    }
     default: {
       const searchTokens = tokenizeSearch(normalizedSearch);
-      const searchConditions = searchTokens.map((token) => ({
-        OR: [
-          { firmName: { contains: token, mode: "insensitive" } },
-          { name: { contains: token, mode: "insensitive" } },
-          { email: { contains: token, mode: "insensitive" } },
-          { phone: { contains: token, mode: "insensitive" } },
-          { address: { contains: token, mode: "insensitive" } },
-        ],
-      }));
+      const searchConditions = searchTokens.map((token) => {
+        const normalizedCommissionBaseToken = String(token || "").toUpperCase();
+        const commissionBaseFilter = Object.values(COMMISSION_BASE).includes(
+          normalizedCommissionBaseToken
+        )
+          ? [{ commissionBase: { equals: normalizedCommissionBaseToken } }]
+          : [];
+
+        return {
+          OR: [
+            { firmName: { contains: token, mode: "insensitive" } },
+            { name: { contains: token, mode: "insensitive" } },
+            { email: { contains: token, mode: "insensitive" } },
+            { phone: { contains: token, mode: "insensitive" } },
+            { address: { contains: token, mode: "insensitive" } },
+            ...commissionBaseFilter,
+          ],
+        };
+      });
 
       return searchConditions.length ? { AND: searchConditions } : null;
     }
@@ -135,9 +225,10 @@ const createManufacturer = asyncHandler(async (req, res) => {
     throw new AppError(validationError, 400);
   }
 
+  const commissionData = buildManufacturerCommissionData(req.body);
   const { firmName, name, address, email, phone } = req.body;
   const manufacturer = await prisma.manufacturer.create({
-    data: { userId, firmName, name, address, email, phone },
+    data: { userId, firmName, name, address, email, phone, ...commissionData },
   });
   return res.status(201).json(manufacturer);
 });
@@ -148,6 +239,9 @@ const MANUFACTURER_SORT_FIELDS = [
   "email",
   "phone",
   "address",
+  "commissionBase",
+  "commissionPercent",
+  "commissionLotRate",
   "createdAt",
   "updatedAt",
 ];
@@ -235,14 +329,20 @@ const updateManufacturer = asyncHandler(async (req, res) => {
   const { firmName, name, address, email, phone } = req.body;
   const existing = await prisma.manufacturer.findFirst({
     where: { id, userId },
-    select: { id: true },
+    select: {
+      id: true,
+      commissionBase: true,
+      commissionPercent: true,
+      commissionLotRate: true,
+    },
   });
   if (!existing) {
     throw new AppError("manufacturer not found", 404);
   }
+  const commissionData = buildManufacturerCommissionData(req.body, existing);
   const manufacturer = await prisma.manufacturer.update({
     where: { id },
-    data: { firmName, name, address, email, phone },
+    data: { firmName, name, address, email, phone, ...commissionData },
   });
 
   return res.json(manufacturer);
