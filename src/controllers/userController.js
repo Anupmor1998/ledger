@@ -17,6 +17,13 @@ const WHATSAPP_GROUP_INVITE_REGEX =
 const ZERO_THRESHOLD = 0.01;
 const INTEGER_TOLERANCE = 0.001;
 
+const PERIOD_TYPES = {
+  MONTHLY: "MONTHLY",
+  QUARTERLY: "QUARTERLY",
+  HALF_YEARLY: "HALF_YEARLY",
+  YEARLY: "YEARLY",
+};
+
 function ensureValidFinancialYear(value, fieldName) {
   const year = Number(value);
   if (!Number.isInteger(year) || year < 2000 || year > 2100) {
@@ -37,6 +44,167 @@ function validateTransferYears(sourceFyStartYear, targetFyStartYear) {
   }
 
   return { sourceYear, targetYear };
+}
+
+function resolveTransferPeriod(input = {}) {
+  const periodType = String(input.periodType || PERIOD_TYPES.YEARLY).toUpperCase();
+
+  let sourceStartDate;
+  let sourceEndDate;
+  let targetDate;
+  let sourceFyStartYear;
+  let targetFyStartYear;
+  let periodLabel = "";
+
+  if (input.sourceStartDate && input.sourceEndDate && input.targetDate) {
+    sourceStartDate = new Date(input.sourceStartDate);
+    sourceEndDate = new Date(input.sourceEndDate);
+    targetDate = new Date(input.targetDate);
+
+    if (
+      Number.isNaN(sourceStartDate.getTime()) ||
+      Number.isNaN(sourceEndDate.getTime()) ||
+      Number.isNaN(targetDate.getTime())
+    ) {
+      throw new AppError("Invalid dates provided for carry forward", 400);
+    }
+
+    if (sourceEndDate < sourceStartDate) {
+      throw new AppError("sourceEndDate cannot be before sourceStartDate", 400);
+    }
+    if (targetDate <= sourceStartDate) {
+      throw new AppError("targetDate must be later than source period start date", 400);
+    }
+
+    sourceFyStartYear = getFinancialYearStartYear(sourceStartDate);
+    targetFyStartYear = getFinancialYearStartYear(targetDate);
+    periodLabel = input.periodLabel || `${periodType} Transfer`;
+
+    return {
+      periodType,
+      sourceStartDate,
+      sourceEndDate,
+      targetDate,
+      sourceFyStartYear,
+      targetFyStartYear,
+      periodLabel,
+    };
+  }
+
+  if (periodType === PERIOD_TYPES.MONTHLY) {
+    const sYear = Number(input.sourceYear);
+    const sMonth = Number(input.sourceMonth);
+    const tYear = Number(input.targetYear);
+    const tMonth = Number(input.targetMonth);
+
+    if (!Number.isInteger(sYear) || !Number.isInteger(sMonth) || sMonth < 1 || sMonth > 12) {
+      throw new AppError("Valid sourceYear and sourceMonth (1-12) are required for monthly transfer", 400);
+    }
+    if (!Number.isInteger(tYear) || !Number.isInteger(tMonth) || tMonth < 1 || tMonth > 12) {
+      throw new AppError("Valid targetYear and targetMonth (1-12) are required for monthly transfer", 400);
+    }
+
+    sourceStartDate = new Date(Date.UTC(sYear, sMonth - 1, 1, 0, 0, 0, 0));
+    sourceEndDate = new Date(Date.UTC(sYear, sMonth, 0, 23, 59, 59, 999));
+    targetDate = new Date(Date.UTC(tYear, tMonth - 1, 1, 0, 0, 0, 0));
+
+    if (targetDate <= sourceStartDate) {
+      throw new AppError("Target month must be later than source month", 400);
+    }
+
+    sourceFyStartYear = getFinancialYearStartYear(sourceStartDate);
+    targetFyStartYear = getFinancialYearStartYear(targetDate);
+    periodLabel = `Month ${sMonth}/${sYear} → ${tMonth}/${tYear}`;
+  } else if (periodType === PERIOD_TYPES.QUARTERLY) {
+    const sFy = ensureValidFinancialYear(input.sourceFyStartYear, "sourceFyStartYear");
+    const sQ = Number(input.sourceQuarter);
+    const tFy = ensureValidFinancialYear(input.targetFyStartYear, "targetFyStartYear");
+    const tQ = Number(input.targetQuarter);
+
+    if (!Number.isInteger(sQ) || sQ < 1 || sQ > 4) {
+      throw new AppError("sourceQuarter must be between 1 and 4", 400);
+    }
+    if (!Number.isInteger(tQ) || tQ < 1 || tQ > 4) {
+      throw new AppError("targetQuarter must be between 1 and 4", 400);
+    }
+
+    const quarterBounds = {
+      1: { sMonth: 3, eMonth: 5, sYearOffset: 0, eYearOffset: 0 },
+      2: { sMonth: 6, eMonth: 8, sYearOffset: 0, eYearOffset: 0 },
+      3: { sMonth: 9, eMonth: 11, sYearOffset: 0, eYearOffset: 0 },
+      4: { sMonth: 0, eMonth: 2, sYearOffset: 1, eYearOffset: 1 },
+    };
+
+    const sq = quarterBounds[sQ];
+    const tq = quarterBounds[tQ];
+
+    sourceStartDate = new Date(Date.UTC(sFy + sq.sYearOffset, sq.sMonth, 1, 0, 0, 0, 0));
+    sourceEndDate = new Date(Date.UTC(sFy + sq.eYearOffset, sq.eMonth + 1, 0, 23, 59, 59, 999));
+    targetDate = new Date(Date.UTC(tFy + tq.sYearOffset, tq.sMonth, 1, 0, 0, 0, 0));
+
+    if (targetDate <= sourceStartDate) {
+      throw new AppError("Target quarter must be later than source quarter", 400);
+    }
+
+    sourceFyStartYear = sFy;
+    targetFyStartYear = tFy;
+    periodLabel = `Q${sQ} (${getFinancialYearLabel(sFy)}) → Q${tQ} (${getFinancialYearLabel(tFy)})`;
+  } else if (periodType === PERIOD_TYPES.HALF_YEARLY) {
+    const sFy = ensureValidFinancialYear(input.sourceFyStartYear, "sourceFyStartYear");
+    const sH = Number(input.sourceHalf);
+    const tFy = ensureValidFinancialYear(input.targetFyStartYear, "targetFyStartYear");
+    const tH = Number(input.targetHalf);
+
+    if (!Number.isInteger(sH) || sH < 1 || sH > 2) {
+      throw new AppError("sourceHalf must be 1 or 2", 400);
+    }
+    if (!Number.isInteger(tH) || tH < 1 || tH > 2) {
+      throw new AppError("targetHalf must be 1 or 2", 400);
+    }
+
+    if (sH === 1) {
+      sourceStartDate = new Date(Date.UTC(sFy, 3, 1, 0, 0, 0, 0));
+      sourceEndDate = new Date(Date.UTC(sFy, 9, 0, 23, 59, 59, 999));
+    } else {
+      sourceStartDate = new Date(Date.UTC(sFy, 9, 1, 0, 0, 0, 0));
+      sourceEndDate = new Date(Date.UTC(sFy + 1, 3, 0, 23, 59, 59, 999));
+    }
+
+    if (tH === 1) {
+      targetDate = new Date(Date.UTC(tFy, 3, 1, 0, 0, 0, 0));
+    } else {
+      targetDate = new Date(Date.UTC(tFy, 9, 1, 0, 0, 0, 0));
+    }
+
+    if (targetDate <= sourceStartDate) {
+      throw new AppError("Target half must be later than source half", 400);
+    }
+
+    sourceFyStartYear = sFy;
+    targetFyStartYear = tFy;
+    periodLabel = `H${sH} (${getFinancialYearLabel(sFy)}) → H${tH} (${getFinancialYearLabel(tFy)})`;
+  } else {
+    const { sourceYear, targetYear } = validateTransferYears(
+      input.sourceFyStartYear,
+      input.targetFyStartYear
+    );
+    sourceStartDate = new Date(Date.UTC(sourceYear, 3, 1, 0, 0, 0, 0));
+    sourceEndDate = new Date(Date.UTC(sourceYear + 1, 2, 31, 23, 59, 59, 999));
+    targetDate = new Date(Date.UTC(targetYear, 3, 1, 0, 0, 0, 0));
+    sourceFyStartYear = sourceYear;
+    targetFyStartYear = targetYear;
+    periodLabel = `${getFinancialYearLabel(sourceYear)} → ${getFinancialYearLabel(targetYear)}`;
+  }
+
+  return {
+    periodType,
+    sourceStartDate,
+    sourceEndDate,
+    targetDate,
+    sourceFyStartYear,
+    targetFyStartYear,
+    periodLabel,
+  };
 }
 
 function getRemainingQuantity(order) {
@@ -225,16 +393,25 @@ async function getNextPendingPaymentSerialNo(tx, userId, fyStartYear) {
 
 const previewYearTransfer = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
-  const { sourceYear, targetYear } = validateTransferYears(
-    req.query.sourceFyStartYear,
-    req.query.targetFyStartYear
-  );
+  const {
+    periodType,
+    sourceStartDate,
+    sourceEndDate,
+    targetDate,
+    sourceFyStartYear,
+    targetFyStartYear,
+    periodLabel,
+  } = resolveTransferPeriod(req.query);
 
   const [orders, pendingPayments, carriedOrders, carriedPayments] = await Promise.all([
     prisma.order.findMany({
       where: {
         userId,
-        fyStartYear: sourceYear,
+        status: "PENDING",
+        orderDate: {
+          gte: sourceStartDate,
+          lte: sourceEndDate,
+        },
       },
       include: {
         customer: true,
@@ -243,36 +420,39 @@ const previewYearTransfer = asyncHandler(async (req, res) => {
       },
       orderBy: [{ orderDate: "asc" }, { orderNo: "asc" }],
     }),
-    prisma.pendingPayment.findMany({
-      where: {
-        userId,
-        fyStartYear: sourceYear,
-      },
-      include: {
-        order: { select: { orderNo: true } },
-      },
-      orderBy: [{ dueDate: "asc" }, { serialNo: "asc" }],
-    }),
+    periodType === PERIOD_TYPES.YEARLY
+      ? prisma.pendingPayment.findMany({
+          where: {
+            userId,
+            fyStartYear: sourceFyStartYear,
+          },
+          include: {
+            order: { select: { orderNo: true } },
+          },
+          orderBy: [{ dueDate: "asc" }, { serialNo: "asc" }],
+        })
+      : Promise.resolve([]),
     prisma.order.findMany({
       where: {
         userId,
-        fyStartYear: targetYear,
         carriedForwardFromOrderId: { not: null },
       },
       select: {
         carriedForwardFromOrderId: true,
       },
     }),
-    prisma.pendingPayment.findMany({
-      where: {
-        userId,
-        fyStartYear: targetYear,
-        carriedForwardFromPendingPaymentId: { not: null },
-      },
-      select: {
-        carriedForwardFromPendingPaymentId: true,
-      },
-    }),
+    periodType === PERIOD_TYPES.YEARLY
+      ? prisma.pendingPayment.findMany({
+          where: {
+            userId,
+            fyStartYear: targetFyStartYear,
+            carriedForwardFromPendingPaymentId: { not: null },
+          },
+          select: {
+            carriedForwardFromPendingPaymentId: true,
+          },
+        })
+      : Promise.resolve([]),
   ]);
 
   const carriedOrderIds = new Set(
@@ -287,10 +467,10 @@ const previewYearTransfer = asyncHandler(async (req, res) => {
   const skippedOrders = [];
   for (const order of orders) {
     const alreadyCarried = carriedOrderIds.has(order.id);
-    const preview = buildCarryForwardOrderPreview(order, targetYear, alreadyCarried);
+    const preview = buildCarryForwardOrderPreview(order, targetFyStartYear, alreadyCarried);
 
-    if (order.status === "CANCELLED") {
-      skippedOrders.push(buildSkippedOrderPreview(order, "Cancelled orders cannot be carried forward."));
+    if (order.status !== "PENDING") {
+      skippedOrders.push(buildSkippedOrderPreview(order, "Only pending orders can be carried forward."));
       continue;
     }
     if (preview.remainingQuantity <= ZERO_THRESHOLD) {
@@ -299,7 +479,7 @@ const previewYearTransfer = asyncHandler(async (req, res) => {
     }
     if (!hasWholeNumberRemainingQuantity(order)) {
       manualCarryOrders.push(
-        buildCarryForwardOrderPreview(order, targetYear, alreadyCarried, {
+        buildCarryForwardOrderPreview(order, targetFyStartYear, alreadyCarried, {
           requiresManualQuantity: true,
           manualQuantityReason:
             "Remaining quantity is fractional. Enter a whole-number carry quantity to include this order.",
@@ -315,7 +495,7 @@ const previewYearTransfer = asyncHandler(async (req, res) => {
   const skippedPendingPayments = [];
   for (const payment of pendingPayments) {
     const alreadyCarried = carriedPendingPaymentIds.has(payment.id);
-    const preview = buildCarryForwardPendingPaymentPreview(payment, targetYear, alreadyCarried);
+    const preview = buildCarryForwardPendingPaymentPreview(payment, targetFyStartYear, alreadyCarried);
 
     if (![PENDING_PAYMENT_STATUS.PENDING, PENDING_PAYMENT_STATUS.PARTIAL].includes(payment.status)) {
       skippedPendingPayments.push(
@@ -338,7 +518,7 @@ const previewYearTransfer = asyncHandler(async (req, res) => {
 
   const warnings = [];
   if (transferableOrders.some((item) => item.alreadyCarried)) {
-    warnings.push("Some orders were already carried forward to the selected target financial year.");
+    warnings.push("Some orders were already carried forward.");
   }
   if (transferablePendingPayments.some((item) => item.alreadyCarried)) {
     warnings.push("Some pending payments were already carried forward to the selected target financial year.");
@@ -353,10 +533,15 @@ const previewYearTransfer = asyncHandler(async (req, res) => {
   }
 
   return res.json({
-    sourceFyStartYear: sourceYear,
-    sourceFyLabel: getFinancialYearLabel(sourceYear),
-    targetFyStartYear: targetYear,
-    targetFyLabel: getFinancialYearLabel(targetYear),
+    periodType,
+    periodLabel,
+    sourceStartDate,
+    sourceEndDate,
+    targetDate,
+    sourceFyStartYear,
+    sourceFyLabel: getFinancialYearLabel(sourceFyStartYear),
+    targetFyStartYear,
+    targetFyLabel: getFinancialYearLabel(targetFyStartYear),
     orders: transferableOrders,
     manualCarryOrders,
     pendingPayments: transferablePendingPayments,
@@ -576,10 +761,14 @@ const getYearTransferBatchDetails = asyncHandler(async (req, res) => {
 
 const executeYearTransfer = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
-  const { sourceYear, targetYear } = validateTransferYears(
-    req.body?.sourceFyStartYear,
-    req.body?.targetFyStartYear
-  );
+  const {
+    periodType,
+    sourceStartDate,
+    sourceEndDate,
+    targetDate,
+    sourceFyStartYear,
+    targetFyStartYear,
+  } = resolveTransferPeriod(req.body);
 
   const standardOrderIds = Array.isArray(req.body?.orderIds)
     ? req.body.orderIds.map((id) => String(id)).filter(Boolean)
@@ -599,6 +788,10 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
   const orderIds = Array.from(new Set([...standardOrderIds, ...manualOrderIds]));
   const manualOrderOverrideMap = new Map(orderOverrides.map((item) => [item.id, item.quantity]));
 
+  if (periodType !== PERIOD_TYPES.YEARLY && pendingPaymentIds.length > 0) {
+    throw new AppError("Pending payments can only be transferred on a yearly basis", 400);
+  }
+
   if (orderIds.length === 0 && pendingPaymentIds.length === 0) {
     throw new AppError("select at least one order or pending payment to carry forward", 400);
   }
@@ -609,8 +802,12 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
         ? tx.order.findMany({
             where: {
               userId,
-              fyStartYear: sourceYear,
               id: { in: orderIds },
+              status: "PENDING",
+              orderDate: {
+                gte: sourceStartDate,
+                lte: sourceEndDate,
+              },
             },
             include: {
               customer: true,
@@ -623,7 +820,7 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
         ? tx.pendingPayment.findMany({
             where: {
               userId,
-              fyStartYear: sourceYear,
+              fyStartYear: sourceFyStartYear,
               id: { in: pendingPaymentIds },
             },
             include: {
@@ -635,7 +832,6 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
         ? tx.order.findMany({
             where: {
               userId,
-              fyStartYear: targetYear,
               carriedForwardFromOrderId: { in: orderIds },
             },
             select: { carriedForwardFromOrderId: true },
@@ -645,7 +841,7 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
         ? tx.pendingPayment.findMany({
             where: {
               userId,
-              fyStartYear: targetYear,
+              fyStartYear: targetFyStartYear,
               carriedForwardFromPendingPaymentId: { in: pendingPaymentIds },
             },
             select: { carriedForwardFromPendingPaymentId: true },
@@ -654,13 +850,13 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
     ]);
 
     if (sourceOrders.length !== orderIds.length) {
-      throw new AppError("one or more selected orders were not found", 404);
+      throw new AppError("one or more selected orders were not found or not eligible in this period", 404);
     }
     if (sourcePendingPayments.length !== pendingPaymentIds.length) {
       throw new AppError("one or more selected pending payments were not found", 404);
     }
     if (existingCarriedOrders.length > 0) {
-      throw new AppError("one or more selected orders were already carried to the target financial year", 400);
+      throw new AppError("one or more selected orders were already carried forward", 400);
     }
     if (existingCarriedPayments.length > 0) {
       throw new AppError("one or more selected pending payments were already carried to the target financial year", 400);
@@ -668,7 +864,7 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
 
     const eligibleOrders = sourceOrders.filter(
       (order) => {
-        if (order.status === "CANCELLED" || getRemainingQuantity(order) <= ZERO_THRESHOLD) {
+        if (order.status !== "PENDING" || getRemainingQuantity(order) <= ZERO_THRESHOLD) {
           return false;
         }
         if (hasWholeNumberRemainingQuantity(order)) {
@@ -694,13 +890,13 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
     const batch = await tx.yearTransferBatch.create({
       data: {
         userId,
-        sourceFyStartYear: sourceYear,
-        targetFyStartYear: targetYear,
+        sourceFyStartYear,
+        targetFyStartYear,
       },
     });
 
-    let nextOrderNo = await getNextOrderNo(tx, userId, targetYear);
-    let nextPendingPaymentSerialNo = await getNextPendingPaymentSerialNo(tx, userId, targetYear);
+    let nextOrderNo = await getNextOrderNo(tx, userId, targetFyStartYear);
+    let nextPendingPaymentSerialNo = await getNextPendingPaymentSerialNo(tx, userId, targetFyStartYear);
     const carriedOrderBySourceId = new Map();
 
     const selectedPendingPaymentSourceOrderIds = Array.from(
@@ -711,7 +907,7 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
         ? await tx.order.findMany({
             where: {
               userId,
-              fyStartYear: targetYear,
+              fyStartYear: targetFyStartYear,
               carriedForwardFromOrderId: { in: selectedPendingPaymentSourceOrderIds },
             },
             select: {
@@ -736,7 +932,7 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
         ? manualOrderOverrideMap.get(order.id)
         : Math.round(remainingQuantity);
       const carryForwardNote = hasManualQuantity
-        ? `Carry forward note: source remaining quantity ${remainingQuantity.toFixed(2)} ${order.quantityUnit}; carried as ${carryQuantity} ${order.quantityUnit} in ${getFinancialYearLabel(targetYear)}.`
+        ? `Carry forward note: source remaining quantity ${remainingQuantity.toFixed(2)} ${order.quantityUnit}; carried as ${carryQuantity} ${order.quantityUnit} in ${getFinancialYearLabel(targetFyStartYear)}.`
         : null;
 
       const createdOrder = await tx.order.create({
@@ -744,6 +940,7 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
           userId,
           customerId: order.customerId,
           manufacturerId: order.manufacturerId,
+          manufacturerFirmName: order.manufacturerFirmName || null,
           qualityId: order.qualityId,
           status: "PENDING",
           rate: order.rate,
@@ -763,12 +960,12 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
           paymentDueOn: order.paymentDueOn,
           deliveryDateFrom: order.deliveryDateFrom,
           deliveryDateTo: order.deliveryDateTo,
-          fyStartYear: targetYear,
+          fyStartYear: targetFyStartYear,
           orderNo: nextOrderNo,
           isCarryForward: true,
           carriedForwardFromOrderId: order.id,
           transferBatchId: batch.id,
-          orderDate: new Date(targetYear, 3, 1),
+          orderDate: targetDate,
         },
         include: {
           customer: true,
@@ -786,8 +983,9 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
         metadata: {
           sourceOrderId: order.id,
           sourceFyStartYear: order.fyStartYear,
-          targetFyStartYear: targetYear,
+          targetFyStartYear,
           transferBatchId: batch.id,
+          periodType,
         },
       });
 
@@ -821,6 +1019,7 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
             userId,
             customerId: sourceOrder.customerId,
             manufacturerId: sourceOrder.manufacturerId,
+            manufacturerFirmName: sourceOrder.manufacturerFirmName || null,
             qualityId: sourceOrder.qualityId,
             status: "COMPLETED",
             rate: sourceOrder.rate,
@@ -838,12 +1037,12 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
             paymentDueOn: sourceOrder.paymentDueOn,
             deliveryDateFrom: sourceOrder.deliveryDateFrom,
             deliveryDateTo: sourceOrder.deliveryDateTo,
-            fyStartYear: targetYear,
+            fyStartYear: targetFyStartYear,
             orderNo: nextOrderNo,
             isCarryForward: true,
             carriedForwardFromOrderId: sourceOrder.id,
             transferBatchId: batch.id,
-            orderDate: new Date(targetYear, 3, 1),
+            orderDate: targetDate,
           },
           include: {
             customer: true,
@@ -861,8 +1060,9 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
           metadata: {
             sourceOrderId: sourceOrder.id,
             sourceFyStartYear: sourceOrder.fyStartYear,
-            targetFyStartYear: targetYear,
+            targetFyStartYear,
             transferBatchId: batch.id,
+            isPaymentSupportOrder: true,
           },
         });
 
@@ -875,7 +1075,7 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
         data: {
           userId,
           orderId: targetOrderId,
-          fyStartYear: targetYear,
+          fyStartYear: targetFyStartYear,
           serialNo: nextPendingPaymentSerialNo,
           isCarryForward: true,
           carriedForwardFromPendingPaymentId: payment.id,
