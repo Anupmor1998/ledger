@@ -30,5 +30,7 @@ router.post("/verify-payment", verifySubscriptionPayment);
 router.post("/fail-order", failSubscriptionOrder);
 router.get("/invoices", getSubscriptionInvoices);
 router.get("/invoices/:id/download", downloadSubscriptionInvoice);
+router.get("/receipts", getSubscriptionInvoices);
+router.get("/receipts/:id/download", downloadSubscriptionInvoice);
 
 module.exports = router;
