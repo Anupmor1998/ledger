@@ -63,13 +63,13 @@ async function sendSubscriptionInvoicePdf(res, payment) {
     doc.text("Digital Brokerage Ledger & Management Platform", margin, doc.y + 2);
     doc.text("support@saudabook.co.in • www.saudabook.co.in", margin, doc.y + 2);
 
-    // Invoice Meta (Right Aligned)
+    // Receipt Meta (Right Aligned)
     const topY = 54;
     doc.font("NotoBold").fontSize(16).fillColor("#0d9488");
-    doc.text("TAX INVOICE", margin, topY, { align: "right", width: contentWidth });
+    doc.text("PAYMENT RECEIPT", margin, topY, { align: "right", width: contentWidth });
 
     doc.font("NotoBold").fontSize(9).fillColor("#334155");
-    doc.text(`Invoice No: ${invoiceNo}`, margin, topY + 22, { align: "right", width: contentWidth });
+    doc.text(`Receipt No: ${invoiceNo}`, margin, topY + 22, { align: "right", width: contentWidth });
     doc.font("NotoRegular").fontSize(9).fillColor("#64748b");
     doc.text(`Date: ${invoiceDate}`, margin, topY + 36, { align: "right", width: contentWidth });
     doc.text(`Status: PAID`, margin, topY + 50, { align: "right", width: contentWidth });
@@ -82,8 +82,8 @@ async function sendSubscriptionInvoicePdf(res, payment) {
     doc.y = 140;
     const colWidth = (contentWidth - 20) / 2;
 
-    // Left Column: Bill To
-    doc.font("NotoBold").fontSize(10).fillColor("#0d9488").text("BILLED TO", margin, doc.y);
+    // Left Column: Received From
+    doc.font("NotoBold").fontSize(10).fillColor("#0d9488").text("RECEIVED FROM", margin, doc.y);
     doc.y += 4;
     doc.font("NotoBold").fontSize(11).fillColor("#0f172a").text(firmName ? `${firmName}` : userName, margin, doc.y);
     if (firmName && userName) {
@@ -123,8 +123,7 @@ async function sendSubscriptionInvoicePdf(res, payment) {
 
     doc.font("NotoBold").fontSize(9).fillColor("#334155");
     doc.text("ITEM / DESCRIPTION", margin + 12, tableTop + 7);
-    doc.text("SAC CODE", margin + 280, tableTop + 7);
-    doc.text("CYCLE", margin + 360, tableTop + 7);
+    doc.text("BILLING CYCLE", margin + 340, tableTop + 7);
     doc.text("AMOUNT (INR)", margin, tableTop + 7, { align: "right", width: contentWidth - 12 });
 
     // Item Row
@@ -137,8 +136,7 @@ async function sendSubscriptionInvoicePdf(res, payment) {
     doc.text("Cloud Ledger, Brokerage Automation & Order Tracking", margin + 12, itemRowY + 19);
 
     doc.font("NotoRegular").fontSize(9).fillColor("#475569");
-    doc.text("998313", margin + 280, itemRowY + 11);
-    doc.text(payment.billingCycle === "YEARLY" ? "Annual" : "Monthly", margin + 360, itemRowY + 11);
+    doc.text(payment.billingCycle === "YEARLY" ? "Annual" : "Monthly", margin + 340, itemRowY + 11);
 
     doc.font("NotoBold").fontSize(9).fillColor("#0f172a");
     doc.text(`Rs. ${Number(payment.amount).toFixed(2)}`, margin, itemRowY + 11, {
@@ -146,44 +144,30 @@ async function sendSubscriptionInvoicePdf(res, payment) {
       width: contentWidth - 12,
     });
 
-    // Summary Box (Subtotal & Total)
+    // Summary Box (Total Amount Paid)
     const summaryTop = itemRowY + 34;
     const summaryWidth = 230;
     const summaryX = margin + contentWidth - summaryWidth;
 
-    let currY = summaryTop + 10;
-    doc.font("NotoRegular").fontSize(9).fillColor("#64748b");
-    doc.text("Net Taxable Amount:", summaryX, currY);
-    doc.text(`Rs. ${Number(payment.amount).toFixed(2)}`, margin, currY, {
-      align: "right",
-      width: contentWidth - 12,
-    });
+    let currY = summaryTop + 14;
 
-    currY += 16;
-    doc.text("GST / Applicable Taxes:", summaryX, currY);
-    doc.text("Inclusive (Rs. 0.00)", margin, currY, {
-      align: "right",
-      width: contentWidth - 12,
-    });
-
-    currY += 18;
     // Highlight Total Box
     doc.rect(summaryX - 10, currY - 6, summaryWidth + 10, 28).fill("#f0fdf4");
     doc.rect(summaryX - 10, currY - 6, summaryWidth + 10, 28).strokeColor("#86efac").stroke();
 
     doc.font("NotoBold").fontSize(11).fillColor("#15803d");
-    doc.text("Total Paid:", summaryX, currY);
+    doc.text("Total Amount Paid:", summaryX, currY);
     doc.text(`Rs. ${Number(payment.amount).toFixed(2)}`, margin, currY, {
       align: "right",
       width: contentWidth - 12,
     });
 
     // Notes & Terms
-    const notesY = currY + 60;
+    const notesY = currY + 50;
     doc.font("NotoBold").fontSize(9).fillColor("#0f172a").text("Notes & Terms:", margin, notesY);
     doc.font("NotoRegular").fontSize(8).fillColor("#64748b");
     doc.text(
-      "1. This is a computer-generated tax invoice and payment receipt. No physical signature is required.",
+      "1. This is a computer-generated electronic payment receipt. No physical signature is required.",
       margin,
       notesY + 14
     );
@@ -212,9 +196,12 @@ async function sendSubscriptionInvoicePdf(res, payment) {
     doc.end();
   });
 
-  const filename = `Invoice-${payment.invoiceNumber || payment.orderId}.pdf`;
+  const filename = `Receipt-${payment.invoiceNumber || payment.orderId}.pdf`;
   res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+  );
   res.end(pdfBuffer);
 }
 

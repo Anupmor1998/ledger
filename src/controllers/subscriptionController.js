@@ -709,11 +709,11 @@ const downloadSubscriptionInvoice = asyncHandler(async (req, res) => {
   });
 
   if (!payment || payment.userId !== userId) {
-    throw new AppError("Invoice not found", 404);
+    throw new AppError("Payment receipt not found", 404);
   }
 
   if (payment.status !== "SUCCESS") {
-    throw new AppError("Invoices are only generated for successful payments", 400);
+    throw new AppError("Payment receipts are only generated for successful payments", 400);
   }
 
   await sendSubscriptionInvoicePdf(res, payment);
