@@ -1,5 +1,6 @@
 const express = require("express");
 const authMiddleware = require("../middlewares/authMiddleware");
+const { requireActiveSubscription } = require("../middlewares/subscriptionGatingMiddleware");
 const {
   createCustomer,
   checkCustomerDuplicates,
@@ -20,7 +21,7 @@ router.use(authMiddleware);
 
 router.post("/check-duplicates", checkCustomerDuplicates);
 router.post("/resolve-duplicates", resolveCustomerDuplicates);
-router.post("/", createCustomer);
+router.post("/", requireActiveSubscription, createCustomer);
 router.get("/duplicate-groups", listCustomerDuplicateGroups);
 router.get("/", listCustomers);
 router.get("/:id", getCustomerById);

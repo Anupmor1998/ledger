@@ -4,6 +4,7 @@ const asyncHandler = require("../utils/asyncHandler");
 const { getRazorpayInstance, verifyRazorpaySignature, RAZORPAY_KEY_ID } = require("../config/razorpay");
 const logger = require("../utils/logger");
 const { sendSubscriptionInvoicePdf } = require("../utils/invoicePdf");
+const { getSubscriptionDetails } = require("../middlewares/subscriptionGatingMiddleware");
 
 const PLAN_PRICING = {
   STARTER: {
@@ -276,23 +277,50 @@ const createSubscriptionOrder = asyncHandler(async (req, res) => {
 
   const receiptId = `sub_${Date.now().toString().slice(-8)}`;
 
-  const order = await rzp.orders.create({
-    amount: amountInPaise,
-    currency: "INR",
-    receipt: receiptId,
-    notes: {
+  let order;
+  try {
+    order = await rzp.orders.create({
+      amount: amountInPaise,
+      currency: "INR",
+      receipt: receiptId,
+      notes: {
+        userId,
+        plan: normalizedPlan,
+        billingCycle: normalizedCycle,
+        basePrice,
+        unusedCredit,
+        remainingDays,
+        isUpgrade: isUpgrade ? "true" : "false",
+        previousPlan: previousPlan || "",
+        firmName: user?.firmName || "",
+        email: user?.email || "",
+      },
+    });
+  } catch (gatewayErr) {
+    logger.error("Razorpay order creation failed", {
+      feature: "subscription",
       userId,
       plan: normalizedPlan,
-      billingCycle: normalizedCycle,
-      basePrice,
-      unusedCredit,
-      remainingDays,
-      isUpgrade: isUpgrade ? "true" : "false",
-      previousPlan: previousPlan || "",
-      firmName: user?.firmName || "",
-      email: user?.email || "",
-    },
-  });
+      error: gatewayErr,
+    });
+
+    const isAuthFailure =
+      gatewayErr?.statusCode === 401 ||
+      gatewayErr?.error?.code === "BAD_REQUEST_ERROR" ||
+      String(gatewayErr?.error?.description || "").toLowerCase().includes("authentication failed");
+
+    if (isAuthFailure) {
+      throw new AppError(
+        "Payment gateway authentication failed: The RAZORPAY_KEY_ID or RAZORPAY_KEY_SECRET configured on the server is invalid or belongs to a different Razorpay merchant account.",
+        400
+      );
+    }
+
+    throw new AppError(
+      gatewayErr?.error?.description || gatewayErr?.message || "Failed to initiate payment gateway order",
+      400
+    );
+  }
 
   // Create pending subscription payment record
   await prisma.subscriptionPayment.create({
@@ -576,6 +604,227 @@ const downloadSubscriptionInvoice = asyncHandler(async (req, res) => {
   await sendSubscriptionInvoicePdf(res, payment);
 });
 
+/**
+ * GET /api/subscription/reminders
+ * Fetch active in-app reminders and notifications for the user
+ */
+const getInAppReminders = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+  const user = req.user;
+
+  const sub = getSubscriptionDetails(user);
+  const reminders = [];
+
+  // 1. Subscription status reminder
+  if (sub.isExpired) {
+    reminders.push({
+      id: "sub-expired",
+      type: "URGENT",
+      category: "SUBSCRIPTION",
+      title: "Subscription Expired",
+      message: "Your subscription has expired. Please choose a plan to continue creating orders and reports.",
+      actionLabel: "Renew / Upgrade",
+      actionUrl: "/subscription",
+      createdAt: new Date().toISOString(),
+    });
+  } else if (sub.daysRemaining <= 5) {
+    reminders.push({
+      id: "sub-expiring-soon",
+      type: "WARNING",
+      category: "SUBSCRIPTION",
+      title: `${sub.plan === "TRIAL" ? "Free Trial" : "Plan"} Expiring Soon`,
+      message: `Your ${sub.plan === "TRIAL" ? "14-day trial" : "subscription"} expires in ${sub.daysRemaining} day${sub.daysRemaining === 1 ? "" : "s"}. Renew today to ensure uninterrupted access.`,
+      actionLabel: "Renew / Upgrade",
+      actionUrl: "/subscription",
+      createdAt: new Date().toISOString(),
+    });
+  } else {
+    reminders.push({
+      id: "sub-active",
+      type: "SUCCESS",
+      category: "SUBSCRIPTION",
+      title: `${sub.plan} Plan Active`,
+      message: `Your account has full access with ${sub.daysRemaining} days of validity remaining.`,
+      actionLabel: "Manage Plan",
+      actionUrl: "/subscription",
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  // 2. Pending customer brokerage balance reminder
+  const pendingCount = await prisma.pendingPayment.count({
+    where: {
+      userId,
+      status: { not: "PAID" },
+      balanceAmount: { gt: 0 },
+    },
+  });
+
+  if (pendingCount > 0) {
+    const pendingAgg = await prisma.pendingPayment.aggregate({
+      where: {
+        userId,
+        status: { not: "PAID" },
+        balanceAmount: { gt: 0 },
+      },
+      _sum: { balanceAmount: true },
+    });
+    const totalPending = Math.round(Number(pendingAgg._sum.balanceAmount || 0));
+    reminders.push({
+      id: "pending-payments",
+      type: "INFO",
+      category: "PAYMENTS",
+      title: "Outstanding Brokerage Due",
+      message: `₹${totalPending.toLocaleString("en-IN")} pending payment across ${pendingCount} order${pendingCount === 1 ? "" : "s"}.`,
+      actionLabel: "View Payments",
+      actionUrl: "/payments",
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  // 3. Orders in progress reminder
+  const pendingOrdersCount = await prisma.order.count({
+    where: {
+      userId,
+      status: "PENDING",
+    },
+  });
+
+  if (pendingOrdersCount > 0) {
+    reminders.push({
+      id: "pending-orders",
+      type: "INFO",
+      category: "ORDERS",
+      title: "Orders Pending Completion",
+      message: `${pendingOrdersCount} trade order${pendingOrdersCount === 1 ? "" : "s"} currently in progress awaiting dispatch.`,
+      actionLabel: "Track Orders",
+      actionUrl: "/order-progress",
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  return res.json({
+    reminders,
+    unreadCount: reminders.filter((r) => r.type === "URGENT" || r.type === "WARNING").length,
+    subscriptionState: {
+      plan: sub.plan,
+      daysRemaining: sub.daysRemaining,
+      isExpired: sub.isExpired,
+    },
+  });
+});
+
+/**
+ * POST /api/subscription/test-switch-plan
+ * Testing utility: switch subscription plan & validity to test all tiers
+ */
+const testSwitchPlan = asyncHandler(async (req, res) => {
+  // Allow test switching only when explicitly enabled via env (e.g. in staging/dev)
+  const isSimulatorEnabled =
+    process.env.ENABLE_SUBSCRIPTION_SIMULATOR === "true" ||
+    process.env.NODE_ENV === "development" ||
+    process.env.NODE_ENV === "staging";
+
+  if (!isSimulatorEnabled) {
+    throw new AppError("Subscription plan simulator is disabled in this environment", 403);
+  }
+
+  const userId = req.user.userId;
+  const { mode } = req.body;
+  const now = new Date();
+  let updateData = {};
+
+  switch (mode) {
+    case "TRIAL_ACTIVE":
+      updateData = {
+        subscriptionPlan: "TRIAL",
+        billingCycle: "MONTHLY",
+        subscriptionStatus: "ACTIVE",
+        trialEndsAt: new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000),
+        planExpiresAt: null,
+      };
+      break;
+    case "TRIAL_EXPIRING":
+      updateData = {
+        subscriptionPlan: "TRIAL",
+        billingCycle: "MONTHLY",
+        subscriptionStatus: "ACTIVE",
+        trialEndsAt: new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000),
+        planExpiresAt: null,
+      };
+      break;
+    case "TRIAL_EXPIRED":
+      updateData = {
+        subscriptionPlan: "TRIAL",
+        billingCycle: "MONTHLY",
+        subscriptionStatus: "EXPIRED",
+        trialEndsAt: new Date(now.getTime() - 1 * 24 * 60 * 60 * 1000),
+        planExpiresAt: null,
+      };
+      break;
+    case "STARTER":
+      updateData = {
+        subscriptionPlan: "STARTER",
+        billingCycle: "MONTHLY",
+        subscriptionStatus: "ACTIVE",
+        trialEndsAt: null,
+        planExpiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000),
+      };
+      break;
+    case "GROWTH":
+      updateData = {
+        subscriptionPlan: "GROWTH",
+        billingCycle: "MONTHLY",
+        subscriptionStatus: "ACTIVE",
+        trialEndsAt: null,
+        planExpiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000),
+      };
+      break;
+    case "PREMIUM":
+      updateData = {
+        subscriptionPlan: "PREMIUM",
+        billingCycle: "YEARLY",
+        subscriptionStatus: "ACTIVE",
+        trialEndsAt: null,
+        planExpiresAt: new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000),
+      };
+      break;
+    case "PLAN_EXPIRED":
+      updateData = {
+        subscriptionPlan: "STARTER",
+        billingCycle: "MONTHLY",
+        subscriptionStatus: "EXPIRED",
+        trialEndsAt: null,
+        planExpiresAt: new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000),
+      };
+      break;
+    default:
+      throw new AppError("Invalid test plan mode", 400);
+  }
+
+  const updatedUser = await prisma.user.update({
+    where: { id: userId },
+    data: updateData,
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      firmName: true,
+      role: true,
+      subscriptionPlan: true,
+      billingCycle: true,
+      subscriptionStatus: true,
+      trialEndsAt: true,
+      planExpiresAt: true,
+    },
+  });
+
+  return res.json({
+    message: `Switched test plan to ${mode}`,
+    user: updatedUser,
+  });
+});
+
 module.exports = {
   getSubscriptionStatus,
   previewSubscriptionOrder,
@@ -584,4 +833,6 @@ module.exports = {
   failSubscriptionOrder,
   getSubscriptionInvoices,
   downloadSubscriptionInvoice,
+  getInAppReminders,
+  testSwitchPlan,
 };

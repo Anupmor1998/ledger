@@ -1,5 +1,6 @@
 const express = require("express");
 const authMiddleware = require("../middlewares/authMiddleware");
+const { requireActiveSubscription } = require("../middlewares/subscriptionGatingMiddleware");
 const {
   createManufacturer,
   checkManufacturerDuplicates,
@@ -19,7 +20,7 @@ router.use(authMiddleware);
 
 router.post("/check-duplicates", checkManufacturerDuplicates);
 router.post("/resolve-duplicates", resolveManufacturerDuplicates);
-router.post("/", createManufacturer);
+router.post("/", requireActiveSubscription, createManufacturer);
 router.get("/duplicate-groups", listManufacturerDuplicateGroups);
 router.get("/", listManufacturers);
 router.get("/:id", getManufacturerById);
