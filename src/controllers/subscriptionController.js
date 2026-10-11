@@ -1,7 +1,12 @@
 const prisma = require("../config/prisma");
 const AppError = require("../utils/appError");
 const asyncHandler = require("../utils/asyncHandler");
-const { getRazorpayInstance, verifyRazorpaySignature, RAZORPAY_KEY_ID } = require("../config/razorpay");
+const {
+  getRazorpayInstance,
+  verifyRazorpaySignature,
+  verifyRazorpayWebhookSignature,
+  RAZORPAY_KEY_ID,
+} = require("../config/razorpay");
 const logger = require("../utils/logger");
 const { sendSubscriptionInvoicePdf } = require("../utils/invoicePdf");
 const { getSubscriptionDetails } = require("../middlewares/subscriptionGatingMiddleware");
@@ -356,8 +361,110 @@ const createSubscriptionOrder = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Common idempotent function to activate or renew subscription upon verified payment
+ */
+async function processSuccessfulSubscriptionPayment({ paymentRecord, razorpayPaymentId }) {
+  if (paymentRecord.status === "SUCCESS") {
+    const existingUser = await prisma.user.findUnique({
+      where: { id: paymentRecord.userId },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        firmName: true,
+        subscriptionPlan: true,
+        billingCycle: true,
+        subscriptionStatus: true,
+        planExpiresAt: true,
+      },
+    });
+
+    return {
+      updatedPayment: paymentRecord,
+      updatedUser: existingUser,
+      alreadyActive: true,
+    };
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: paymentRecord.userId },
+    select: {
+      id: true,
+      subscriptionPlan: true,
+      billingCycle: true,
+      planExpiresAt: true,
+    },
+  });
+
+  const isYearly = paymentRecord.billingCycle === "YEARLY";
+  const daysToAdd = isYearly ? 365 : 30;
+  const now = new Date();
+
+  let newExpiresAt;
+  const isSamePlanRenewal =
+    user?.subscriptionPlan === paymentRecord.plan &&
+    user?.billingCycle === paymentRecord.billingCycle;
+
+  if (isSamePlanRenewal && user?.planExpiresAt && new Date(user.planExpiresAt) > now) {
+    // Standard renewal: extend from existing expiry date
+    newExpiresAt = new Date(new Date(user.planExpiresAt).getTime() + daysToAdd * 24 * 60 * 60 * 1000);
+  } else {
+    // Upgraded or expired: fresh 30 or 365 days start from today
+    newExpiresAt = new Date(now.getTime() + daysToAdd * 24 * 60 * 60 * 1000);
+  }
+
+  const invoiceNumber = `SB-${now.getFullYear()}-${Date.now().toString().slice(-6)}`;
+
+  const [updatedPayment, updatedUser] = await prisma.$transaction([
+    prisma.subscriptionPayment.update({
+      where: { id: paymentRecord.id },
+      data: {
+        paymentId: razorpayPaymentId,
+        status: "SUCCESS",
+        invoiceNumber,
+        paidAt: now,
+      },
+    }),
+    prisma.user.update({
+      where: { id: paymentRecord.userId },
+      data: {
+        subscriptionPlan: paymentRecord.plan,
+        billingCycle: paymentRecord.billingCycle,
+        subscriptionStatus: "ACTIVE",
+        planExpiresAt: newExpiresAt,
+      },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        firmName: true,
+        subscriptionPlan: true,
+        billingCycle: true,
+        subscriptionStatus: true,
+        planExpiresAt: true,
+      },
+    }),
+  ]);
+
+  logger.info("Subscription payment activated successfully", {
+    feature: "subscription",
+    userId: paymentRecord.userId,
+    orderId: paymentRecord.orderId,
+    paymentId: razorpayPaymentId,
+    plan: paymentRecord.plan,
+    expiresAt: newExpiresAt,
+  });
+
+  return {
+    updatedPayment,
+    updatedUser,
+    alreadyActive: false,
+  };
+}
+
+/**
  * POST /api/subscription/verify-payment
- * Verify Razorpay signature and activate/extend user plan
+ * Verify Razorpay signature from frontend checkout callback and activate/extend user plan
  */
 const verifySubscriptionPayment = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
@@ -392,113 +499,121 @@ const verifySubscriptionPayment = asyncHandler(async (req, res) => {
     throw new AppError("Subscription order record not found", 404);
   }
 
-  // Idempotency check: if this order was already processed and verified, return the current status
-  if (paymentRecord.status === "SUCCESS") {
-    const existingUser = await prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        firmName: true,
-        subscriptionPlan: true,
-        billingCycle: true,
-        subscriptionStatus: true,
-        planExpiresAt: true,
-      },
+  const { updatedPayment, updatedUser, alreadyActive } =
+    await processSuccessfulSubscriptionPayment({
+      paymentRecord,
+      razorpayPaymentId: razorpay_payment_id,
     });
-
-    return res.json({
-      success: true,
-      message: `Plan ${paymentRecord.plan} is already active.`,
-      plan: existingUser.subscriptionPlan,
-      billingCycle: existingUser.billingCycle,
-      expiresAt: existingUser.planExpiresAt,
-      invoiceNumber: paymentRecord.invoiceNumber,
-      user: existingUser,
-    });
-  }
-
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: {
-      id: true,
-      subscriptionPlan: true,
-      billingCycle: true,
-      planExpiresAt: true,
-    },
-  });
-
-  // Calculate new validity
-  const isYearly = paymentRecord.billingCycle === "YEARLY";
-  const daysToAdd = isYearly ? 365 : 30;
-  const now = new Date();
-
-  let newExpiresAt;
-
-  // Check if this was a renewal of the same tier and billing cycle
-  const isSamePlanRenewal =
-    user?.subscriptionPlan === paymentRecord.plan &&
-    user?.billingCycle === paymentRecord.billingCycle;
-
-  if (isSamePlanRenewal && user?.planExpiresAt && new Date(user.planExpiresAt) > now) {
-    // Standard renewal: extend from existing expiry date
-    newExpiresAt = new Date(new Date(user.planExpiresAt).getTime() + daysToAdd * 24 * 60 * 60 * 1000);
-  } else {
-    // Upgraded with proration discount: fresh 30 or 365 days start from today!
-    newExpiresAt = new Date(now.getTime() + daysToAdd * 24 * 60 * 60 * 1000);
-  }
-
-  const invoiceNumber = `SB-${now.getFullYear()}-${Date.now().toString().slice(-6)}`;
-
-  // Atomic database transaction: ensure both payment update and user upgrade succeed together
-  const [updatedPayment, updatedUser] = await prisma.$transaction([
-    prisma.subscriptionPayment.update({
-      where: { id: paymentRecord.id },
-      data: {
-        paymentId: razorpay_payment_id,
-        status: "SUCCESS",
-        invoiceNumber,
-        paidAt: now,
-      },
-    }),
-    prisma.user.update({
-      where: { id: userId },
-      data: {
-        subscriptionPlan: paymentRecord.plan,
-        billingCycle: paymentRecord.billingCycle,
-        subscriptionStatus: "ACTIVE",
-        planExpiresAt: newExpiresAt,
-      },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        firmName: true,
-        subscriptionPlan: true,
-        billingCycle: true,
-        subscriptionStatus: true,
-        planExpiresAt: true,
-      },
-    }),
-  ]);
-
-  logger.info("Subscription payment verified successfully", {
-    feature: "subscription",
-    userId,
-    plan: paymentRecord.plan,
-    expiresAt: newExpiresAt,
-  });
 
   return res.json({
     success: true,
-    message: `Plan upgraded to ${paymentRecord.plan} successfully!`,
+    message: alreadyActive
+      ? `Plan ${updatedPayment.plan} is already active.`
+      : `Plan upgraded to ${updatedPayment.plan} successfully!`,
     plan: updatedUser.subscriptionPlan,
     billingCycle: updatedUser.billingCycle,
     expiresAt: updatedUser.planExpiresAt,
-    invoiceNumber,
+    invoiceNumber: updatedPayment.invoiceNumber,
     user: updatedUser,
   });
+});
+
+/**
+ * POST /api/subscription/webhook
+ * Asynchronous background webhook called by Razorpay servers upon payment events
+ */
+const handleRazorpayWebhook = asyncHandler(async (req, res) => {
+  const signature = req.headers["x-razorpay-signature"];
+
+  if (!signature) {
+    logger.warn("Razorpay webhook received without signature", {
+      feature: "subscription",
+    });
+    return res.status(400).json({ error: "Missing x-razorpay-signature header" });
+  }
+
+  const rawBody = req.rawBody || JSON.stringify(req.body);
+
+  let isValid = false;
+  try {
+    isValid = verifyRazorpayWebhookSignature({ rawBody, signature });
+  } catch (err) {
+    logger.error("Error validating Razorpay webhook signature", {
+      feature: "subscription",
+      error: err.message,
+    });
+    return res.status(500).json({ error: "Webhook validation error" });
+  }
+
+  if (!isValid) {
+    logger.warn("Razorpay webhook signature validation failed", {
+      feature: "subscription",
+    });
+    return res.status(400).json({ error: "Invalid webhook signature" });
+  }
+
+  const event = req.body?.event;
+  const payload = req.body?.payload;
+
+  logger.info(`Razorpay webhook event received: ${event}`, {
+    feature: "subscription",
+    event,
+  });
+
+  if (event === "order.paid" || event === "payment.captured") {
+    const orderId =
+      payload?.payment?.entity?.order_id || payload?.order?.entity?.id;
+    const paymentId = payload?.payment?.entity?.id;
+
+    if (orderId) {
+      const paymentRecord = await prisma.subscriptionPayment.findUnique({
+        where: { orderId },
+      });
+
+      if (paymentRecord) {
+        await processSuccessfulSubscriptionPayment({
+          paymentRecord,
+          razorpayPaymentId: paymentId || paymentRecord.paymentId || "webhook_captured",
+        });
+
+        logger.info("Subscription activated via Razorpay webhook", {
+          feature: "subscription",
+          orderId,
+          paymentId,
+          userId: paymentRecord.userId,
+        });
+      }
+    }
+  } else if (event === "payment.failed") {
+    const orderId = payload?.payment?.entity?.order_id;
+    const paymentId = payload?.payment?.entity?.id;
+    const reason =
+      payload?.payment?.entity?.error_description || "Payment failed via webhook";
+
+    if (orderId) {
+      const paymentRecord = await prisma.subscriptionPayment.findUnique({
+        where: { orderId },
+      });
+
+      if (paymentRecord && paymentRecord.status === "PENDING") {
+        await prisma.subscriptionPayment.update({
+          where: { id: paymentRecord.id },
+          data: {
+            status: "FAILED",
+            paymentId: paymentId || null,
+          },
+        });
+
+        logger.info("Subscription payment marked FAILED via Razorpay webhook", {
+          feature: "subscription",
+          orderId,
+          reason,
+        });
+      }
+    }
+  }
+
+  return res.status(200).json({ status: "ok" });
 });
 
 /**
@@ -830,6 +945,7 @@ module.exports = {
   previewSubscriptionOrder,
   createSubscriptionOrder,
   verifySubscriptionPayment,
+  handleRazorpayWebhook,
   failSubscriptionOrder,
   getSubscriptionInvoices,
   downloadSubscriptionInvoice,

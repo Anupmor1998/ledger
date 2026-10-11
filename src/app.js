@@ -36,7 +36,13 @@ app.use(
     credentials: true,
   }),
 );
-app.use(express.json());
+app.use(
+  express.json({
+    verify: (req, res, buf) => {
+      req.rawBody = buf.toString("utf-8");
+    },
+  }),
+);
 app.use(requestLogger);
 
 app.use(`${apiPrefix}/health`, healthRoutes);

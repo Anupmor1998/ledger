@@ -1,6 +1,6 @@
 const crypto = require("crypto");
 const Razorpay = require("razorpay");
-const { RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET } = require("./env");
+const { RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET } = require("./env");
 const logger = require("../utils/logger");
 
 let razorpayInstance = null;
@@ -50,8 +50,23 @@ function verifyRazorpaySignature({ orderId, paymentId, signature }) {
   return generatedSignature === signature;
 }
 
+/**
+ * Verify cryptographic HMAC-SHA256 signature sent in Razorpay Webhooks
+ */
+function verifyRazorpayWebhookSignature({ rawBody, signature, secret }) {
+  const webhookSecret = secret || RAZORPAY_WEBHOOK_SECRET || RAZORPAY_KEY_SECRET;
+  if (!webhookSecret) {
+    throw new Error("Razorpay webhook secret not configured on server");
+  }
+
+  return Razorpay.validateWebhookSignature(rawBody, signature, webhookSecret);
+}
+
 module.exports = {
   getRazorpayInstance,
   verifyRazorpaySignature,
+  verifyRazorpayWebhookSignature,
   RAZORPAY_KEY_ID,
+  RAZORPAY_KEY_SECRET,
+  RAZORPAY_WEBHOOK_SECRET,
 };
