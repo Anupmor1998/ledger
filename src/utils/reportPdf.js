@@ -168,10 +168,12 @@ function drawMergedRow(doc, text, options = {}, totalWidth) {
     doc.restore();
   }
 
+  const yOffset = Math.max(Math.floor((height - fontSize) / 2), 2);
+
   doc.fillColor(TEXT_COLOR);
   drawRichText(doc, text, {
     x: startX + padding,
-    y: startY + 4,
+    y: startY + yOffset,
     width: totalWidth - padding * 2,
     align: options.alignment || "left",
     fontSize,
@@ -203,11 +205,11 @@ function drawTableHeader(doc, columns, widths) {
     const width = widths[index];
     doc.fillColor(TEXT_COLOR);
     drawRichText(doc, column.header, {
-      x: cursorX + 4,
+      x: cursorX + 2,
       y: startY + 4,
-      width: width - 8,
+      width: width - 4,
       align: "left",
-      fontSize: 10,
+      fontSize: 8.5,
       bold: true,
     });
     doc.rect(cursorX, startY, width, height).stroke(BORDER_COLOR);
@@ -255,10 +257,10 @@ function drawDataRow(doc, columns, widths, row) {
     doc.fillColor(TEXT_COLOR);
     drawRichText(doc, cellText(row.amount), {
       x: startX + padding,
-      y: startY + 4,
+      y: startY + 3,
       width: firstWidth - padding * 2,
       align: "left",
-      fontSize: 10,
+      fontSize: 8.5,
       bold: false,
     });
 
@@ -273,10 +275,10 @@ function drawDataRow(doc, columns, widths, row) {
       doc.fillColor(TEXT_COLOR);
       drawRichText(doc, cellText(row.details), {
         x: startX + firstWidth + padding,
-        y: startY + 4,
+        y: startY + 3,
         width: restWidth - padding * 2,
         align: "left",
-        fontSize: 10,
+        fontSize: 8.5,
         bold: false,
       });
     }
@@ -292,8 +294,8 @@ function drawDataRow(doc, columns, widths, row) {
   const texts = columns.map((column) => cellText(row?.[column.key] ?? ""));
   const heights = texts.map((text, index) =>
     doc.heightOfString(text, {
-      width: Math.max(widths[index] - padding * 2, 20),
-      fontSize: 10,
+      width: Math.max(widths[index] - padding * 2, 16),
+      fontSize: 8.5,
       align: "left",
     }),
   );
@@ -318,10 +320,10 @@ function drawDataRow(doc, columns, widths, row) {
     doc.fillColor(TEXT_COLOR);
     drawRichText(doc, texts[index], {
       x: cursorX + padding,
-      y: startY + 4,
+      y: startY + 3,
       width: width - padding * 2,
       align: "left",
-      fontSize: 10,
+      fontSize: 8.5,
       bold: isBold,
     });
 
@@ -422,8 +424,8 @@ function renderSheet(doc, sheetConfig) {
 async function sendPdfReport(res, fileName, sheets) {
   const doc = new PDFDocument({
     size: "A4",
-    layout: "landscape",
-    margin: 28,
+    layout: "portrait",
+    margin: 20,
     bufferPages: true,
     autoFirstPage: true,
   });
@@ -452,7 +454,11 @@ async function sendPdfReport(res, fileName, sheets) {
   });
 
   res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+  const encodedFileName = encodeURIComponent(fileName);
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="${fileName.replace(/"/g, '')}"; filename*=UTF-8''${encodedFileName}`
+  );
   res.end(pdfBuffer);
 }
 

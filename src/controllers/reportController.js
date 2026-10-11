@@ -88,13 +88,18 @@ function resolveOrderPaymentStatus(order) {
   return "UNPAID";
 }
 
-function extractPartialPayments(orders, partialPaymentEntries = []) {
+function extractPartialPayments(
+  orders,
+  partialPaymentEntries = [],
+  reportType = "customer",
+) {
   const partialPayments = [];
 
   if (Array.isArray(partialPaymentEntries)) {
     partialPaymentEntries.forEach((entry) => {
       const amount = Number(entry.amount || 0);
       if (amount > 0) {
+        const isMfr = reportType === "manufacturer";
         partialPayments.push({
           orderNo: null,
           serialNo: entry.serialNo,
@@ -103,11 +108,20 @@ function extractPartialPayments(orders, partialPaymentEntries = []) {
           paymentMode: entry.paymentMode || "-",
           remark: entry.remark ? String(entry.remark).trim() : "-",
           customerId: entry.customerId,
-          customerFirmName: entry.customer?.firmName || "",
-          customerName: entry.customer?.name || "",
+          manufacturerId: entry.manufacturerId,
+          customerFirmName:
+            (isMfr
+              ? entry.manufacturer?.firmName
+              : entry.customer?.firmName) || "",
+          customerName:
+            (isMfr ? entry.manufacturer?.name : entry.customer?.name) || "",
         });
       }
     });
+  }
+
+  if (reportType === "manufacturer") {
+    return partialPayments;
   }
 
   orders.forEach((order) => {
@@ -186,9 +200,14 @@ function buildFinalTotalRows(
   partialPaymentEntries = [],
   orders = [],
   label = "",
+  reportType = "customer",
 ) {
   const initialTotalRow = buildFinalTotalRow(finalTotals, label);
-  const payments = extractPartialPayments(orders, partialPaymentEntries);
+  const payments = extractPartialPayments(
+    orders,
+    partialPaymentEntries,
+    reportType,
+  );
 
   if (payments.length === 0) {
     return [initialTotalRow];
@@ -517,11 +536,23 @@ function buildReportColumns(reportType) {
   ];
 }
 
-function orderToReportRow(order, reportType, paymentStatusFilter) {
+function orderToReportRow(
+  order,
+  reportType,
+  paymentStatusFilter,
+  manufacturerAccountStatusMap,
+) {
   const party =
     reportType === "manufacturer" ? order.customer : order.manufacturer;
-  const paymentStatus = resolveOrderPaymentStatus(order);
-  const isPaid = paymentStatus === "PAID";
+  let paymentStatus;
+  if (reportType === "manufacturer" && manufacturerAccountStatusMap) {
+    paymentStatus =
+      manufacturerAccountStatusMap.get(order.manufacturerId) ||
+      resolveOrderPaymentStatus(order);
+  } else {
+    paymentStatus = resolveOrderPaymentStatus(order);
+  }
+  const isPaid = paymentStatus === "PAID" || paymentStatus === "SETTLED";
   const shouldBold =
     (paymentStatusFilter === REPORT_PAYMENT_STATUS.PAID ||
       paymentStatusFilter === REPORT_PAYMENT_STATUS.ALL) &&
@@ -534,8 +565,13 @@ function orderToReportRow(order, reportType, paymentStatusFilter) {
       ? party?.firmName || ""
       : resolvedManufacturerFirm;
 
+  const commissionAmount =
+    reportType === "manufacturer"
+      ? order.manufacturerCommissionAmount ?? 0
+      : order.commissionAmount ?? 0;
+
   return {
-    amount: roundCurrency(order.commissionAmount ?? 0),
+    amount: roundCurrency(commissionAmount),
     lot: computeLotValue(order),
     quality: order.quality?.name || "",
     meter: computeMeterValue(order).toFixed(2),
@@ -550,10 +586,14 @@ function orderToReportRow(order, reportType, paymentStatusFilter) {
   };
 }
 
-function computeReportTotals(orders) {
+function computeReportTotals(orders, reportType = "customer") {
   return orders.reduce(
     (totals, order) => {
-      totals.amount += roundCurrency(order.commissionAmount ?? 0);
+      const commissionAmount =
+        reportType === "manufacturer"
+          ? order.manufacturerCommissionAmount ?? 0
+          : order.commissionAmount ?? 0;
+      totals.amount += roundCurrency(commissionAmount);
       totals.lot += Number(computeLotValue(order) || 0);
       return totals;
     },
@@ -644,6 +684,7 @@ function getScopeHeaderLines(party, reportType) {
         fontSize: 11,
         bold: true,
         height: 20,
+        fill: true,
       },
       {
         value: `${partyLabel} Name : ${personName}`,
@@ -651,6 +692,7 @@ function getScopeHeaderLines(party, reportType) {
         fontSize: 11,
         bold: true,
         height: 20,
+        fill: true,
       },
     );
   } else if (firmName && !personName) {
@@ -660,6 +702,7 @@ function getScopeHeaderLines(party, reportType) {
       fontSize: 11,
       bold: true,
       height: 20,
+      fill: true,
     });
   } else {
     lines.push({
@@ -668,6 +711,7 @@ function getScopeHeaderLines(party, reportType) {
       fontSize: 11,
       bold: true,
       height: 20,
+      fill: true,
     });
   }
 
@@ -678,6 +722,7 @@ function getScopeHeaderLines(party, reportType) {
       fontSize: 11,
       bold: true,
       height: 20,
+      fill: true,
     },
     {
       value: `Mobile    : ${String(party?.phone || "-").trim() || "-"}`,
@@ -685,6 +730,7 @@ function getScopeHeaderLines(party, reportType) {
       fontSize: 11,
       bold: true,
       height: 20,
+      fill: true,
     },
   );
 
@@ -706,33 +752,37 @@ function getSelectedPartyHeaderLines(party, reportType) {
       {
         value: `${partyLabel} Firm Name : ${firmName}`,
         alignment: "left",
-        fontSize: 14,
+        fontSize: 11,
         bold: true,
-        height: 24,
+        height: 20,
+        fill: true,
       },
       {
         value: `${partyLabel} Name : ${personName}`,
         alignment: "left",
-        fontSize: 14,
+        fontSize: 11,
         bold: true,
-        height: 24,
+        height: 20,
+        fill: true,
       },
     );
   } else if (firmName && !personName) {
     lines.push({
       value: `${partyLabel} Firm Name : ${firmName}`,
       alignment: "left",
-      fontSize: 14,
+      fontSize: 11,
       bold: true,
-      height: 24,
+      height: 20,
+      fill: true,
     });
   } else {
     lines.push({
       value: `${partyLabel} Name : ${personName || firmName || "-"}`,
       alignment: "left",
-      fontSize: 14,
+      fontSize: 11,
       bold: true,
-      height: 24,
+      height: 20,
+      fill: true,
     });
   }
 
@@ -740,16 +790,18 @@ function getSelectedPartyHeaderLines(party, reportType) {
     {
       value: `Address   : ${String(party?.address || "-").trim() || "-"}`,
       alignment: "left",
-      fontSize: 14,
+      fontSize: 11,
       bold: true,
-      height: 24,
+      height: 20,
+      fill: true,
     },
     {
-      value: `Phone     : ${String(party?.phone || "-").trim() || "-"}`,
+      value: `Mobile    : ${String(party?.phone || "-").trim() || "-"}`,
       alignment: "left",
-      fontSize: 14,
+      fontSize: 11,
       bold: true,
-      height: 24,
+      height: 20,
+      fill: true,
     },
   );
 
@@ -787,14 +839,17 @@ function buildReportSections(
   query,
   paymentStatusFilter,
   partialPaymentEntries = [],
+  manufacturerAccountStatusMap = new Map(),
 ) {
   const groupMap = new Map();
   const specificScope = isSpecificScope(query, reportType);
-  const finalTotals = computeReportTotals(orders);
+  const finalTotals = computeReportTotals(orders, reportType);
   const finalTotalRows = buildFinalTotalRows(
     finalTotals,
     partialPaymentEntries,
     orders,
+    "",
+    reportType,
   );
 
   if (specificScope) {
@@ -802,7 +857,12 @@ function buildReportSections(
       {
         showHeader: true,
         rows: sortReportOrders(orders).map((order) =>
-          orderToReportRow(order, reportType, paymentStatusFilter),
+          orderToReportRow(
+            order,
+            reportType,
+            paymentStatusFilter,
+            manufacturerAccountStatusMap,
+          ),
         ),
       },
     ];
@@ -846,15 +906,21 @@ function buildReportSections(
 
   sortedScopes.forEach((scopeGroup) => {
     const sortedScopeOrders = sortReportOrders(scopeGroup.orders);
-    const scopeTotals = computeReportTotals(scopeGroup.orders);
+    const scopeTotals = computeReportTotals(scopeGroup.orders, reportType);
     const scopePartyId = scopeGroup.scopeParty?.id;
     const scopePartialEntries = Array.isArray(partialPaymentEntries)
-      ? partialPaymentEntries.filter((e) => e.customerId === scopePartyId)
+      ? partialPaymentEntries.filter((e) =>
+          reportType === "manufacturer"
+            ? e.manufacturerId === scopePartyId
+            : e.customerId === scopePartyId,
+        )
       : [];
     const scopeTotalRows = buildFinalTotalRows(
       scopeTotals,
       scopePartialEntries,
       scopeGroup.orders,
+      "",
+      reportType,
     );
 
     if (groupBy === REPORT_GROUP_BY.DATE) {
@@ -862,7 +928,12 @@ function buildReportSections(
         headerLines: getScopeHeaderLines(scopeGroup.scopeParty, reportType),
         rows: [
           ...sortedScopeOrders.map((order) =>
-            orderToReportRow(order, reportType, paymentStatusFilter),
+            orderToReportRow(
+              order,
+              reportType,
+              paymentStatusFilter,
+              manufacturerAccountStatusMap,
+            ),
           ),
           ...scopeTotalRows,
         ],
@@ -912,7 +983,12 @@ function buildReportSections(
     sortedInnerGroups.forEach((innerGroup, index) => {
       const isLastInner = index === sortedInnerGroups.length - 1;
       const innerRows = sortReportOrders(innerGroup.orders).map((order) =>
-        orderToReportRow(order, reportType, paymentStatusFilter),
+        orderToReportRow(
+          order,
+          reportType,
+          paymentStatusFilter,
+          manufacturerAccountStatusMap,
+        ),
       );
 
       sections.push({
@@ -941,6 +1017,7 @@ function buildReportSections(
     partialPaymentEntries,
     orders,
     "Grand Total",
+    reportType,
   );
 
   sections.push({
@@ -957,45 +1034,59 @@ function buildReportHeaderLines(user, selectedParty, reportType) {
   const address = String(user?.businessAddress || "").trim();
   const phone = String(user?.contactPhone || "").trim();
 
-  return [
+  const lines = [
     {
       value: firmTitle,
       alignment: "center",
-      fontSize: 14,
+      fontSize: 16,
       bold: true,
-      height: 24,
+      height: 26,
+      fill: false,
     },
     subtitle
       ? {
           value: subtitle,
           alignment: "center",
-          fontSize: 13,
+          fontSize: 12,
           bold: true,
-          height: 24,
+          height: 20,
+          fill: false,
         }
       : null,
     address
       ? {
           value: address,
           alignment: "center",
-          fontSize: 12,
-          bold: true,
-          height: 22,
+          fontSize: 10,
+          bold: false,
+          height: 18,
+          fill: false,
         }
       : null,
     phone
       ? {
           value: phone.startsWith("(M)") ? phone : `(M) ${phone}`,
           alignment: "center",
-          fontSize: 13,
+          fontSize: 11,
           bold: true,
-          height: 24,
+          height: 18,
+          fill: false,
         }
       : null,
-    ...(selectedParty
-      ? getSelectedPartyHeaderLines(selectedParty, reportType)
-      : []),
   ].filter(Boolean);
+
+  if (selectedParty) {
+    lines.push(
+      {
+        value: "",
+        height: 8,
+        fill: false,
+      },
+      ...getSelectedPartyHeaderLines(selectedParty, reportType),
+    );
+  }
+
+  return lines;
 }
 
 async function exportReportByType(req, res, reportType, format = "xlsx") {
@@ -1008,18 +1099,27 @@ async function exportReportByType(req, res, reportType, format = "xlsx") {
     where.status = status;
   }
 
+  const isManufacturerReport = reportType === "manufacturer";
   const rawOrders = await fetchOrders(where);
-  const orders = rawOrders.filter((order) =>
-    matchesPaymentStatus(order, paymentStatus),
-  );
   const selectedParty = await getSelectedReportParty(
     req.query,
     reportType,
     req.user.userId,
   );
 
-  const baseFileName =
-    reportType === "manufacturer" ? "manufacturer-report" : "customer-report";
+  let baseFileName = "";
+  if (selectedParty) {
+    const rawPartyName = String(selectedParty.firmName || selectedParty.name || "").trim();
+    // Sanitize party name for safe filename, replacing commas, symbols, and spaces with a single underscore
+    const safePartyName = rawPartyName
+      .replace(/[\\/:*?"<>|,;.]+/g, "_")
+      .replace(/[\s_]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+    baseFileName = safePartyName || (isManufacturerReport ? "Manufacturer_Report" : "Customer_Report");
+  } else {
+    baseFileName = isManufacturerReport ? "All_Manufacturers_Report" : "All_Customers_Report";
+  }
+
   const fileName = `${baseFileName}.${normalizedFormat === "pdf" ? "pdf" : "xlsx"}`;
   const sheetColumns = buildReportColumns(reportType);
   const headerLines = buildReportHeaderLines(
@@ -1028,30 +1128,120 @@ async function exportReportByType(req, res, reportType, format = "xlsx") {
     reportType,
   );
 
-  const customerIds = [
-    ...new Set(
-      [
-        req.query.customerId,
-        ...orders.map((o) => o.customerId),
-        ...rawOrders.map((o) => o.customerId),
-      ].filter(Boolean),
-    ),
-  ];
-
+  let orders = [];
   let partialPaymentEntries = [];
-  if (customerIds.length > 0 && paymentStatus !== REPORT_PAYMENT_STATUS.PAID) {
-    partialPaymentEntries = await prisma.paymentEntry.findMany({
-      where: {
-        userId: req.user.userId,
-        customerId: { in: customerIds },
-        adjustedAgainst: "PARTIAL",
-        isFullySettled: false,
-      },
-      include: {
-        customer: { select: { id: true, name: true, firmName: true } },
-      },
-      orderBy: [{ date: "asc" }, { serialNo: "asc" }],
+  const manufacturerAccountStatusMap = new Map();
+
+  if (isManufacturerReport) {
+    const partyIds = [
+      ...new Set(
+        [
+          req.query.manufacturerId,
+          ...rawOrders.map((o) => o.manufacturerId),
+        ].filter(Boolean),
+      ),
+    ];
+
+    let manufacturerPaymentEntries = [];
+    if (partyIds.length > 0) {
+      manufacturerPaymentEntries = await prisma.paymentEntry.findMany({
+        where: {
+          userId: req.user.userId,
+          partyType: "MANUFACTURER",
+          manufacturerId: { in: partyIds },
+        },
+        include: {
+          manufacturer: { select: { id: true, name: true, firmName: true } },
+        },
+        orderBy: [{ date: "asc" }, { serialNo: "asc" }],
+      });
+    }
+
+    // Compute account-level status for each manufacturer
+    partyIds.forEach((mfrId) => {
+      const mfrOrders = rawOrders.filter((o) => o.manufacturerId === mfrId);
+      const totalCommission = roundCurrency(
+        mfrOrders.reduce(
+          (sum, o) => sum + Number(o.manufacturerCommissionAmount ?? 0),
+          0,
+        ),
+      );
+      const mfrPayments = manufacturerPaymentEntries.filter(
+        (p) => p.manufacturerId === mfrId,
+      );
+      const totalPaid = roundCurrency(
+        mfrPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0),
+      );
+      const hasSettledPayment = mfrPayments.some((p) => p.isFullySettled);
+
+      let status = "UNPAID";
+      if (
+        hasSettledPayment ||
+        (totalCommission > 0 && totalPaid >= totalCommission) ||
+        (totalCommission === 0 && totalPaid > 0)
+      ) {
+        status = "PAID";
+      } else if (totalPaid > 0) {
+        status = "PARTIAL";
+      }
+
+      manufacturerAccountStatusMap.set(mfrId, status);
     });
+
+    // Filter orders according to manufacturer's account payment status
+    orders = rawOrders.filter((order) => {
+      const mfrStatus =
+        manufacturerAccountStatusMap.get(order.manufacturerId) || "UNPAID";
+      if (paymentStatus === REPORT_PAYMENT_STATUS.PAID) {
+        return mfrStatus === "PAID";
+      }
+      if (paymentStatus === REPORT_PAYMENT_STATUS.UNPAID) {
+        return mfrStatus === "UNPAID" || mfrStatus === "PARTIAL";
+      }
+      return true;
+    });
+
+    // Only include payment entries for manufacturers that are present in the report
+    const includedMfrIds = new Set(
+      orders.length > 0
+        ? orders.map((o) => o.manufacturerId)
+        : req.query.manufacturerId
+          ? [req.query.manufacturerId]
+          : [],
+    );
+    partialPaymentEntries = manufacturerPaymentEntries.filter((p) =>
+      includedMfrIds.has(p.manufacturerId),
+    );
+  } else {
+    // Customer report logic - completely unchanged
+    orders = rawOrders.filter((order) =>
+      matchesPaymentStatus(order, paymentStatus),
+    );
+
+    const partyIds = [
+      ...new Set(
+        [
+          req.query.customerId,
+          ...orders.map((o) => o.customerId),
+          ...rawOrders.map((o) => o.customerId),
+        ].filter(Boolean),
+      ),
+    ];
+
+    if (partyIds.length > 0 && paymentStatus !== REPORT_PAYMENT_STATUS.PAID) {
+      partialPaymentEntries = await prisma.paymentEntry.findMany({
+        where: {
+          userId: req.user.userId,
+          customerId: { in: partyIds },
+          adjustedAgainst: "PARTIAL",
+          isFullySettled: false,
+        },
+        include: {
+          customer: { select: { id: true, name: true, firmName: true } },
+        },
+        orderBy: [{ date: "asc" }, { serialNo: "asc" }],
+      });
+    }
   }
 
   const sheetConfig = {
@@ -1064,6 +1254,7 @@ async function exportReportByType(req, res, reportType, format = "xlsx") {
       req.query,
       paymentStatus,
       partialPaymentEntries,
+      manufacturerAccountStatusMap,
     ),
   };
 

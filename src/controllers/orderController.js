@@ -29,6 +29,10 @@ function normalizeOrder(order) {
   const normalizedCommissionAmount = order.commissionAmount === null ? null : Number(order.commissionAmount);
   const progressCommissionAmount =
     computeLiveProgressCommissionAmount(order);
+  const normalizedManufacturerCommissionAmount =
+    order.manufacturerCommissionAmount === null ? null : Number(order.manufacturerCommissionAmount);
+  const progressManufacturerCommissionAmount =
+    computeLiveProgressManufacturerCommissionAmount(order);
 
   return {
     ...order,
@@ -39,6 +43,8 @@ function normalizeOrder(order) {
     meter: order.meter === null ? null : Number(order.meter),
     commissionAmount: normalizedCommissionAmount,
     progressCommissionAmount,
+    manufacturerCommissionAmount: normalizedManufacturerCommissionAmount,
+    progressManufacturerCommissionAmount,
     whatsappMessages: buildOrderWhatsAppMessages(order),
     whatsappLinks: buildOrderWhatsAppLinks(order),
   };
@@ -91,12 +97,24 @@ function normalizeFirmNames(value) {
   return parts.length ? parts.join(", ") : null;
 }
 
-function needsLotMetersBasis(quantityUnit, customerCommissionConfig) {
+function needsLotMetersBasis(
+  quantityUnit,
+  customerCommissionConfig,
+  manufacturerCommissionConfig
+) {
   const normalizedUnit = String(quantityUnit || "").toUpperCase();
-  const commissionBase = String(customerCommissionConfig?.commissionBase || "PERCENT").toUpperCase();
-  return normalizedUnit === QUANTITY_UNITS.LOT ||
+  const customerBase = String(
+    customerCommissionConfig?.commissionBase || "PERCENT"
+  ).toUpperCase();
+  const manufacturerBase = String(
+    manufacturerCommissionConfig?.commissionBase || "LOT"
+  ).toUpperCase();
+  return (
+    normalizedUnit === QUANTITY_UNITS.LOT ||
     normalizedUnit === QUANTITY_UNITS.TAKKA ||
-    (normalizedUnit === QUANTITY_UNITS.METER && commissionBase === "LOT");
+    (normalizedUnit === QUANTITY_UNITS.METER &&
+      (customerBase === "LOT" || manufacturerBase === "LOT"))
+  );
 }
 
 function computeProportionalCommissionAmount({
@@ -143,6 +161,44 @@ function computeLiveProgressCommissionAmount(order) {
     lotMeters,
     customerCommissionConfig: commissionConfig,
   });
+
+  const processedMeter = Number(order?.processedMeter || 0);
+  const totalMeter = Number(order?.meter || 0);
+  if (
+    Number.isFinite(processedMeter) &&
+    Number.isFinite(totalMeter) &&
+    totalMeter > 0
+  ) {
+    return roundCurrency((fullCommissionAmount * processedMeter) / totalMeter);
+  }
+
+  if (Number.isFinite(quantity) && quantity > 0) {
+    const processedQuantity = Number(order?.processedQuantity || 0);
+    return roundCurrency((fullCommissionAmount * processedQuantity) / quantity);
+  }
+
+  return roundCurrency(fullCommissionAmount);
+}
+
+function computeLiveProgressManufacturerCommissionAmount(order) {
+  const quantity = Number(order?.quantity || 0);
+  const rate = Number(order?.rate || 0);
+  const lotMeters =
+    order?.lotMeters === null || order?.lotMeters === undefined
+      ? null
+      : Number(order.lotMeters);
+  const commissionConfig = order?.manufacturer || null;
+  const fullCommissionAmount = computeManufacturerCommissionAmount({
+    quantityForCommission: quantity,
+    rate,
+    quantityUnit: order?.quantityUnit,
+    lotMeters,
+    manufacturerCommissionConfig: commissionConfig,
+  });
+
+  if (fullCommissionAmount <= 0) {
+    return 0;
+  }
 
   const processedMeter = Number(order?.processedMeter || 0);
   const totalMeter = Number(order?.meter || 0);
@@ -389,11 +445,59 @@ function computeCommissionAmount({
   return roundCurrency((baseAmount + gstAmount) * (commissionPercent / 100));
 }
 
+function computeManufacturerCommissionAmount({
+  quantityForCommission,
+  rate,
+  quantityUnit,
+  lotMeters,
+  manufacturerCommissionConfig,
+}) {
+  if (!Number.isFinite(quantityForCommission) || quantityForCommission <= 0) {
+    return 0;
+  }
+
+  const commissionBase = String(
+    manufacturerCommissionConfig?.commissionBase || "LOT"
+  ).toUpperCase();
+  const commissionPercent = Number(
+    manufacturerCommissionConfig?.commissionPercent || 0
+  );
+  const commissionLotRate = Number(
+    manufacturerCommissionConfig?.commissionLotRate || 0
+  );
+
+  if (commissionBase === "LOT") {
+    if (commissionLotRate <= 0) {
+      return 0;
+    }
+    const lotQuantity = toLotQuantity({
+      quantity: quantityForCommission,
+      quantityUnit,
+      lotMeters,
+    });
+    return roundCurrency(lotQuantity * commissionLotRate);
+  }
+
+  if (commissionPercent <= 0) {
+    return 0;
+  }
+
+  const meter = toMeterFromQuantity({
+    quantity: quantityForCommission,
+    quantityUnit,
+    lotMeters,
+  });
+  const baseAmount = meter * rate;
+  const gstAmount = baseAmount * GST_RATE;
+  return roundCurrency((baseAmount + gstAmount) * (commissionPercent / 100));
+}
+
 function computeOrderAmounts(
   quantity,
   rate,
   quantityUnit,
   customerCommissionConfig,
+  manufacturerCommissionConfig,
   existingLotMeters
 ) {
   const normalizedUnit = Object.values(QUANTITY_UNITS).includes(quantityUnit)
@@ -402,8 +506,11 @@ function computeOrderAmounts(
 
   const parsedExistingLotMeters = Number(existingLotMeters);
   const shouldUseLotMeters =
-    needsLotMetersBasis(normalizedUnit, customerCommissionConfig) ||
-    normalizedUnit === QUANTITY_UNITS.METER;
+    needsLotMetersBasis(
+      normalizedUnit,
+      customerCommissionConfig,
+      manufacturerCommissionConfig
+    ) || normalizedUnit === QUANTITY_UNITS.METER;
   const lotMeters = shouldUseLotMeters
     ? Number.isFinite(parsedExistingLotMeters) && parsedExistingLotMeters > 0
       ? parsedExistingLotMeters
@@ -426,6 +533,13 @@ function computeOrderAmounts(
     lotMeters,
     customerCommissionConfig,
   });
+  const manufacturerCommissionAmount = computeManufacturerCommissionAmount({
+    quantityForCommission: quantity,
+    rate,
+    quantityUnit: normalizedUnit,
+    lotMeters,
+    manufacturerCommissionConfig,
+  });
 
   return {
     quantityUnit: normalizedUnit,
@@ -433,6 +547,7 @@ function computeOrderAmounts(
     lot,
     meter: round2(meter),
     commissionAmount: roundCurrency(commissionAmount),
+    manufacturerCommissionAmount: roundCurrency(manufacturerCommissionAmount),
   };
 }
 
@@ -661,7 +776,15 @@ const createOrder = asyncHandler(async (req, res) => {
               commissionLotRate: true,
             },
           }),
-          tx.manufacturer.findFirst({ where: { id: manufacturerId, userId }, select: { id: true } }),
+          tx.manufacturer.findFirst({
+            where: { id: manufacturerId, userId },
+            select: {
+              id: true,
+              commissionBase: true,
+              commissionPercent: true,
+              commissionLotRate: true,
+            },
+          }),
         ]);
 
         if (!customer) {
@@ -677,6 +800,7 @@ const createOrder = asyncHandler(async (req, res) => {
           Number(rate),
           normalizedQuantityUnit,
           customer,
+          manufacturer,
           parsedLotMeters
         );
         const nextOrderNo = await getNextOrderNo(tx, userId, fyStartYear);
@@ -699,6 +823,7 @@ const createOrder = asyncHandler(async (req, res) => {
             lot: amountData.lot,
             meter: amountData.meter,
             commissionAmount: 0,
+            manufacturerCommissionAmount: 0,
             remarks: remarks?.trim() || null,
             customerRemark: customerRemark?.trim() || null,
             manufacturerRemark: manufacturerRemark?.trim() || null,
@@ -748,6 +873,7 @@ const ORDER_SORT_FIELDS = [
   "processedQuantity",
   "processedMeter",
   "commissionAmount",
+  "manufacturerCommissionAmount",
   "createdAt",
   "updatedAt",
   "customerName",
@@ -777,6 +903,7 @@ const ORDER_NUMERIC_SEARCH_FIELDS = [
   { field: "lotMeters", type: "decimal" },
   { field: "meter", type: "decimal" },
   { field: "commissionAmount", type: "decimal" },
+  { field: "manufacturerCommissionAmount", type: "decimal" },
   { field: "paymentDueOn", type: "int" },
 ];
 
@@ -919,6 +1046,7 @@ const ORDER_NUMERIC_SUBSTRING_FIELDS = new Set([
   "lotMeters",
   "meter",
   "commissionAmount",
+  "manufacturerCommissionAmount",
   "paymentDueOn",
 ]);
 
@@ -1339,8 +1467,17 @@ const updateOrder = asyncHandler(async (req, res) => {
             deliveryDateTo: true,
             status: true,
             fyStartYear: true,
+            manufacturerCommissionAmount: true,
             customer: {
               select: {
+                commissionBase: true,
+                commissionPercent: true,
+                commissionLotRate: true,
+              },
+            },
+            manufacturer: {
+              select: {
+                id: true,
                 commissionBase: true,
                 commissionPercent: true,
                 commissionLotRate: true,
@@ -1354,6 +1491,7 @@ const updateOrder = asyncHandler(async (req, res) => {
 
         const updateData = {};
         let customerForCommission = null;
+        let manufacturerForCommission = null;
 
         if (customerId !== undefined) {
           const customer = await tx.customer.findFirst({
@@ -1374,12 +1512,18 @@ const updateOrder = asyncHandler(async (req, res) => {
         if (manufacturerId !== undefined) {
           const manufacturer = await tx.manufacturer.findFirst({
             where: { id: manufacturerId, userId },
-            select: { id: true },
+            select: {
+              id: true,
+              commissionBase: true,
+              commissionPercent: true,
+              commissionLotRate: true,
+            },
           });
           if (!manufacturer) {
             throw new AppError("manufacturer not found", 404);
           }
           updateData.manufacturerId = manufacturerId;
+          manufacturerForCommission = manufacturer;
         }
         if (manufacturerFirmName !== undefined) {
           const firmName = normalizeFirmNames(manufacturerFirmName);
@@ -1445,7 +1589,8 @@ const updateOrder = asyncHandler(async (req, res) => {
           quantity !== undefined ||
           quantityUnit !== undefined ||
           lotMeters !== undefined ||
-          customerId !== undefined;
+          customerId !== undefined ||
+          manufacturerId !== undefined;
         if (shouldRecalculateAmounts) {
           const currentOrder = await tx.order.findFirst({
             where: { id, userId },
@@ -1462,12 +1607,21 @@ const updateOrder = asyncHandler(async (req, res) => {
                   commissionLotRate: true,
                 },
               },
+              manufacturer: {
+                select: {
+                  commissionBase: true,
+                  commissionPercent: true,
+                  commissionLotRate: true,
+                },
+              },
             },
           });
           if (!currentOrder) {
             throw new AppError("order not found", 404);
           }
           const commissionConfig = customerForCommission || currentOrder.customer;
+          const manufacturerCommissionConfig =
+            manufacturerForCommission || currentOrder.manufacturer;
           const effectiveQuantityUnitForAmounts =
             quantityUnit !== undefined ? quantityUnit : currentOrder.quantityUnit;
           const amountData = computeOrderAmounts(
@@ -1475,6 +1629,7 @@ const updateOrder = asyncHandler(async (req, res) => {
             rate !== undefined ? Number(rate) : Number(currentOrder.rate),
             effectiveQuantityUnitForAmounts,
             commissionConfig,
+            manufacturerCommissionConfig,
             parsedLotMeters !== undefined ? parsedLotMeters : currentOrder.lotMeters
           );
           updateData.quantityUnit = amountData.quantityUnit;
@@ -1597,6 +1752,7 @@ const updateOrder = asyncHandler(async (req, res) => {
           quantityUnit !== undefined ||
           lotMeters !== undefined ||
           customerId !== undefined ||
+          manufacturerId !== undefined ||
           processedQuantity !== undefined ||
           processedMeter !== undefined ||
           processedQuantityAdd !== undefined ||
@@ -1606,8 +1762,11 @@ const updateOrder = asyncHandler(async (req, res) => {
             ...existing,
             ...updateData,
             customer: customerForCommission || existing.customer,
+            manufacturer: manufacturerForCommission || existing.manufacturer,
           };
           updateData.commissionAmount = computeLiveProgressCommissionAmount(commissionSourceOrder);
+          updateData.manufacturerCommissionAmount =
+            computeLiveProgressManufacturerCommissionAmount(commissionSourceOrder);
         }
 
         const updatedOrder = await tx.order.update({

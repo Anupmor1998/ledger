@@ -134,8 +134,12 @@ const getEligibleOrders = asyncHandler(async (req, res) => {
 
 const createPaymentEntry = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
+  const partyType = String(req.body.partyType || "CUSTOMER").toUpperCase();
+  const isManufacturer = partyType === "MANUFACTURER";
+
   const {
     customerId,
+    manufacturerId,
     date,
     paymentMode,
     amount,
@@ -146,9 +150,22 @@ const createPaymentEntry = asyncHandler(async (req, res) => {
     selectedOrderIds = [],
   } = req.body;
 
-  if (!customerId) {
-    throw new AppError("Customer is required", 400);
+  if (isManufacturer) {
+    if (!manufacturerId) {
+      throw new AppError("Manufacturer is required", 400);
+    }
+    const manufacturer = await prisma.manufacturer.findFirst({
+      where: { id: manufacturerId, userId },
+    });
+    if (!manufacturer) {
+      throw new AppError("Manufacturer not found", 404);
+    }
+  } else {
+    if (!customerId) {
+      throw new AppError("Customer is required", 400);
+    }
   }
+
   if (!date) {
     throw new AppError("Payment date is required", 400);
   }
@@ -168,17 +185,78 @@ const createPaymentEntry = asyncHandler(async (req, res) => {
     );
   }
 
-  const validAdjustedAgainst = ["ORDER_ID", "PARTIAL"];
-  if (!validAdjustedAgainst.includes(adjustedAgainst)) {
-    throw new AppError("adjustedAgainst must be ORDER_ID or PARTIAL", 400);
-  }
-
   const paymentDate = new Date(date);
   if (Number.isNaN(paymentDate.getTime())) {
     throw new AppError("Invalid payment date", 400);
   }
 
   const fyStartYear = await getSelectedFinancialYearStartForUser(userId);
+
+  // If manufacturer, record on-account payment directly
+  if (isManufacturer) {
+    const paymentEntry = await prisma.$transaction(async (tx) => {
+      let created = null;
+
+      for (let attempt = 0; attempt < PAYMENT_ENTRY_RETRY_LIMIT; attempt += 1) {
+        try {
+          const serialNo = await getNextPaymentEntrySerialNo(
+            tx,
+            userId,
+            fyStartYear,
+          );
+
+          created = await tx.paymentEntry.create({
+            data: {
+              userId,
+              fyStartYear,
+              serialNo,
+              partyType: "MANUFACTURER",
+              manufacturerId,
+              customerId: null,
+              date: paymentDate,
+              paymentMode,
+              remark: remark ? String(remark).trim() : null,
+              amount: numericAmount,
+              adjustedAgainst: "PARTIAL",
+              orderDateFrom: null,
+              orderDateTo: null,
+              isFullySettled: false,
+            },
+          });
+          break;
+        } catch (error) {
+          if (
+            isPaymentEntrySerialConflict(error) &&
+            attempt < PAYMENT_ENTRY_RETRY_LIMIT - 1
+          ) {
+            continue;
+          }
+          throw error;
+        }
+      }
+
+      if (!created) {
+        throw new AppError(
+          "Failed to assign a unique serial number for this payment",
+          500,
+        );
+      }
+
+      return created;
+    });
+
+    const fullRecord = await prisma.paymentEntry.findUnique({
+      where: { id: paymentEntry.id },
+      include: {
+        manufacturer: {
+          select: { id: true, firmName: true, name: true, phone: true },
+        },
+        allocations: true,
+      },
+    });
+
+    return res.status(201).json(fullRecord);
+  }
 
   let ordersToAllocate = [];
   if (adjustedAgainst === "ORDER_ID") {
@@ -464,8 +542,16 @@ const listPaymentEntries = asyncHandler(async (req, res) => {
     fyStartYear,
   };
 
+  if (req.query.partyType) {
+    where.partyType = String(req.query.partyType).toUpperCase();
+  }
+
   if (req.query.customerId) {
     where.customerId = req.query.customerId;
+  }
+
+  if (req.query.manufacturerId) {
+    where.manufacturerId = req.query.manufacturerId;
   }
 
   if (req.query.paymentMode) {
@@ -504,6 +590,8 @@ const listPaymentEntries = asyncHandler(async (req, res) => {
     where.OR = [
       { customer: { firmName: { contains: search, mode: "insensitive" } } },
       { customer: { name: { contains: search, mode: "insensitive" } } },
+      { manufacturer: { firmName: { contains: search, mode: "insensitive" } } },
+      { manufacturer: { name: { contains: search, mode: "insensitive" } } },
       { remark: { contains: search, mode: "insensitive" } },
     ];
     if (isNum) {
@@ -519,6 +607,9 @@ const listPaymentEntries = asyncHandler(async (req, res) => {
       orderBy: [{ date: "desc" }, { serialNo: "desc" }],
       include: {
         customer: {
+          select: { id: true, firmName: true, name: true, phone: true },
+        },
+        manufacturer: {
           select: { id: true, firmName: true, name: true, phone: true },
         },
         allocations: {
@@ -574,6 +665,7 @@ const getPaymentEntryById = asyncHandler(async (req, res) => {
     where: { id, userId },
     include: {
       customer: true,
+      manufacturer: true,
       allocations: {
         include: {
           order: {
@@ -603,6 +695,7 @@ const settlePartialAccount = asyncHandler(async (req, res) => {
     where: { id, userId },
     include: {
       customer: true,
+      manufacturer: true,
     },
   });
 
@@ -630,6 +723,27 @@ const settlePartialAccount = asyncHandler(async (req, res) => {
 
   if (numericFinalAmount < 0) {
     throw new AppError("Final settled amount cannot be negative", 400);
+  }
+
+  if (entry.partyType === "MANUFACTURER") {
+    const updatedEntry = await prisma.paymentEntry.update({
+      where: { id: entry.id },
+      data: {
+        amount: numericFinalAmount,
+        isFullySettled: true,
+        finalSettledAmount: numericFinalAmount,
+        settledAt: new Date(),
+      },
+    });
+
+    return res.json({
+      message: "Manufacturer payment entry marked as settled successfully",
+      entry: updatedEntry,
+    });
+  }
+
+  if (!entry.customerId) {
+    throw new AppError("Customer ID is missing for customer payment entry", 400);
   }
 
   const orderWhere = {
@@ -762,6 +876,101 @@ const deletePaymentEntry = asyncHandler(async (req, res) => {
   return res.json({ message: "Payment entry deleted successfully" });
 });
 
+const getManufacturerPaymentSummary = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+  const { manufacturerId } = req.params;
+
+  if (!manufacturerId) {
+    throw new AppError("manufacturerId is required", 400);
+  }
+
+  const manufacturer = await prisma.manufacturer.findFirst({
+    where: { id: manufacturerId, userId },
+    select: {
+      id: true,
+      firmName: true,
+      name: true,
+      phone: true,
+      commissionBase: true,
+      commissionLotRate: true,
+      commissionPercent: true,
+    },
+  });
+
+  if (!manufacturer) {
+    throw new AppError("Manufacturer not found", 404);
+  }
+
+  const orders = await prisma.order.findMany({
+    where: {
+      userId,
+      manufacturerId,
+      status: { not: "CANCELLED" },
+    },
+    select: {
+      id: true,
+      orderNo: true,
+      orderDate: true,
+      status: true,
+      quantity: true,
+      rate: true,
+      quantityUnit: true,
+      lotMeters: true,
+      processedQuantity: true,
+      processedMeter: true,
+      meter: true,
+      lot: true,
+      manufacturerCommissionAmount: true,
+    },
+    orderBy: [{ orderDate: "desc" }, { orderNo: "desc" }],
+  });
+
+  const totalCommissionEarned = orders.reduce((sum, order) => {
+    const amount =
+      order.manufacturerCommissionAmount !== null &&
+      order.manufacturerCommissionAmount !== undefined
+        ? Number(order.manufacturerCommissionAmount)
+        : computeOrderFullCommission(order, manufacturer);
+    return sum + roundCurrency(amount);
+  }, 0);
+
+  const payments = await prisma.paymentEntry.findMany({
+    where: {
+      userId,
+      partyType: "MANUFACTURER",
+      manufacturerId,
+    },
+    select: {
+      id: true,
+      serialNo: true,
+      amount: true,
+      date: true,
+      paymentMode: true,
+      remark: true,
+      createdAt: true,
+    },
+    orderBy: [{ date: "desc" }, { serialNo: "desc" }],
+  });
+
+  const totalPaymentsReceived = round2(
+    payments.reduce((sum, p) => sum + Number(p.amount || 0), 0),
+  );
+
+  const balanceDue = round2(
+    Math.max(0, totalCommissionEarned - totalPaymentsReceived),
+  );
+
+  return res.json({
+    manufacturer,
+    totalCommissionEarned: round2(totalCommissionEarned),
+    totalPaymentsReceived,
+    balanceDue,
+    ordersCount: orders.length,
+    paymentsCount: payments.length,
+    recentPayments: payments.slice(0, 5),
+  });
+});
+
 module.exports = {
   getNextSerialNo,
   getEligibleOrders,
@@ -770,4 +979,5 @@ module.exports = {
   getPaymentEntryById,
   settlePartialAccount,
   deletePaymentEntry,
+  getManufacturerPaymentSummary,
 };

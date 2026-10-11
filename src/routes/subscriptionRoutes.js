@@ -8,6 +8,8 @@ const {
   failSubscriptionOrder,
   getSubscriptionInvoices,
   downloadSubscriptionInvoice,
+  getInAppReminders,
+  testSwitchPlan,
 } = require("../controllers/subscriptionController");
 
 const router = express.Router();
@@ -15,6 +17,8 @@ const router = express.Router();
 router.use(authMiddleware);
 
 router.get("/status", getSubscriptionStatus);
+router.get("/reminders", getInAppReminders);
+router.post("/test-switch-plan", testSwitchPlan);
 router.post("/preview", previewSubscriptionOrder);
 router.post("/create-order", createSubscriptionOrder);
 router.post("/verify-payment", verifySubscriptionPayment);

@@ -1,5 +1,6 @@
 const express = require("express");
 const authMiddleware = require("../middlewares/authMiddleware");
+const { requireActiveSubscription } = require("../middlewares/subscriptionGatingMiddleware");
 const {
   listUsers,
   getMyProfile,
@@ -35,10 +36,10 @@ router.get("/me/year-transfer/batches/:id", getYearTransferBatchDetails);
 router.post("/me/year-transfer/batches/:id/undo", undoYearTransferBatch);
 router.post("/me/year-transfer", executeYearTransfer);
 router.get("/me/remark-templates", listMyRemarkTemplates);
-router.post("/me/remark-templates", createMyRemarkTemplate);
+router.post("/me/remark-templates", requireActiveSubscription, createMyRemarkTemplate);
 router.delete("/me/remark-templates/:id", deleteMyRemarkTemplate);
 router.get("/me/whatsapp-groups", listMyWhatsAppGroups);
-router.post("/me/whatsapp-groups", createMyWhatsAppGroup);
+router.post("/me/whatsapp-groups", requireActiveSubscription, createMyWhatsAppGroup);
 router.put("/me/whatsapp-groups/:id", updateMyWhatsAppGroup);
 router.delete("/me/whatsapp-groups/:id", deleteMyWhatsAppGroup);
 

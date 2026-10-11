@@ -1,5 +1,6 @@
 const express = require("express");
 const authMiddleware = require("../middlewares/authMiddleware");
+const { requireActiveSubscription } = require("../middlewares/subscriptionGatingMiddleware");
 const {
   createOrder,
   listOrders,
@@ -14,7 +15,7 @@ const router = express.Router();
 
 router.use(authMiddleware);
 
-router.post("/", createOrder);
+router.post("/", requireActiveSubscription, createOrder);
 router.get("/", listOrders);
 router.get("/activity-feed", listOrderActivities);
 router.get("/:id", getOrderById);

@@ -1,5 +1,6 @@
 const express = require("express");
 const authMiddleware = require("../middlewares/authMiddleware");
+const { requireActiveSubscription } = require("../middlewares/subscriptionGatingMiddleware");
 const {
   createQuality,
   listQualities,
@@ -14,7 +15,7 @@ const router = express.Router();
 
 router.use(authMiddleware);
 
-router.post("/", createQuality);
+router.post("/", requireActiveSubscription, createQuality);
 router.get("/", listQualities);
 router.get("/:id", getQualityById);
 router.put("/:id", updateQuality);
