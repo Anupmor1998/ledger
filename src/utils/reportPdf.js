@@ -16,13 +16,74 @@ const FONT_GUJARATI_REGULAR =
 const FONT_GUJARATI_BOLD =
   require.resolve("@fontsource/noto-sans-gujarati/files/noto-sans-gujarati-gujarati-700-normal.woff");
 
+const COLUMN_FIXED_WIDTHS = {
+  amount: 48,
+  lot: 22,
+  meter: 48,
+  rate: 28,
+  orderId: 34,
+  date: 48,
+  paymentStatus: 64,
+};
+
+function getColumnAlign(key) {
+  if (key === "amount" || key === "lot" || key === "meter" || key === "rate") {
+    return "right";
+  }
+  if (key === "date" || key === "paymentStatus" || key === "orderId") {
+    return "center";
+  }
+  return "left";
+}
+
 function resolveWidth(columns, availableWidth) {
-  const totalWeight =
-    columns.reduce((sum, column) => sum + Number(column.width || 18), 0) || 1;
-  return columns.map((column) => ({
-    ...column,
-    pdfWidth: (availableWidth * Number(column.width || 18)) / totalWeight,
-  }));
+  if (!columns || columns.length === 0) return [];
+
+  let fixedTotal = 0;
+  let flexTotalWeight = 0;
+
+  const colInfo = columns.map((col) => {
+    const fixedWidth = COLUMN_FIXED_WIDTHS[col.key];
+    if (fixedWidth !== undefined) {
+      fixedTotal += fixedWidth;
+      return { col, fixedWidth, isFlex: false };
+    }
+    const weight = Number(col.width || 20);
+    flexTotalWeight += weight;
+    return { col, weight, isFlex: true };
+  });
+
+  const remainingWidth = Math.max(availableWidth - fixedTotal, 0);
+
+  let currentTotal = 0;
+  const result = colInfo.map((info) => {
+    let pdfWidth;
+    if (info.isFlex) {
+      if (flexTotalWeight > 0) {
+        pdfWidth = (remainingWidth * info.weight) / flexTotalWeight;
+      } else {
+        pdfWidth = remainingWidth / colInfo.filter((c) => c.isFlex).length;
+      }
+    } else {
+      if (fixedTotal > availableWidth && flexTotalWeight === 0) {
+        pdfWidth = (availableWidth * info.fixedWidth) / fixedTotal;
+      } else {
+        pdfWidth = info.fixedWidth;
+      }
+    }
+    currentTotal += pdfWidth;
+    return {
+      ...info.col,
+      pdfWidth,
+    };
+  });
+
+  if (result.length > 0) {
+    const diff = availableWidth - currentTotal;
+    result[result.length - 1].pdfWidth += diff;
+  }
+
+  return result;
 }
 
 function cellText(value) {
@@ -36,7 +97,7 @@ function cellText(value) {
 }
 
 function getFontName(bold = false) {
-  return bold ? "ReportBold" : "ReportRegular";
+  return bold ? "ReportLatinBold" : "ReportLatinRegular";
 }
 
 function getScript(char) {
@@ -154,13 +215,14 @@ function ensurePageSpace(doc, requiredHeight, onPageBreak) {
 
 function drawMergedRow(doc, text, options = {}, totalWidth) {
   const padding = 6;
-  const fontSize = options.fontSize || 11;
-  const height = options.height || 22;
+  const isPartyBlock = options.fill === true;
+  const fontSize = isPartyBlock ? 8.5 : (options.fontSize || 10);
+  const height = isPartyBlock ? 15 : (options.height || 18);
   ensurePageSpace(doc, height);
 
   const startX = doc.page.margins.left;
   const startY = doc.y;
-  if (options.fill !== false) {
+  if (options.fill !== false && options.fill !== undefined) {
     doc.save();
     doc
       .rect(startX, startY, totalWidth, height)
@@ -184,35 +246,46 @@ function drawMergedRow(doc, text, options = {}, totalWidth) {
 }
 
 function drawTableHeader(doc, columns, widths) {
-  const height = 20;
+  const padding = 2;
+  const fontSize = 7.5;
+  const height = 18;
+
   ensurePageSpace(doc, height);
   const startX = doc.page.margins.left;
   const startY = doc.y;
+  const totalWidth = widths.reduce((sum, width) => sum + width, 0);
 
   doc.save();
   doc
-    .rect(
-      startX,
-      startY,
-      widths.reduce((sum, width) => sum + width, 0),
-      height,
-    )
-    .fillAndStroke("#ffffff", BORDER_COLOR);
+    .rect(startX, startY, totalWidth, height)
+    .fillAndStroke("#f2f4f7", BORDER_COLOR);
   doc.restore();
 
   let cursorX = startX;
+  const textY = startY + 4;
+
   columns.forEach((column, index) => {
     const width = widths[index];
     doc.fillColor(TEXT_COLOR);
     drawRichText(doc, column.header, {
-      x: cursorX + 2,
-      y: startY + 4,
-      width: width - 4,
-      align: "left",
-      fontSize: 8.5,
+      x: cursorX + padding,
+      y: textY,
+      width: width - padding * 2,
+      align: "center",
+      fontSize,
       bold: true,
     });
-    doc.rect(cursorX, startY, width, height).stroke(BORDER_COLOR);
+
+    if (index > 0) {
+      doc.save();
+      doc
+        .strokeColor(BORDER_COLOR)
+        .lineWidth(0.75)
+        .moveTo(cursorX, startY)
+        .lineTo(cursorX, startY + height)
+        .stroke();
+      doc.restore();
+    }
     cursorX += width;
   });
 
@@ -228,8 +301,8 @@ function drawDataRow(doc, columns, widths, row) {
       {
         alignment: "left",
         bold: true,
-        fontSize: 10,
-        height: 20,
+        fontSize: 8,
+        height: 16,
         fill: false,
       },
       totalWidth,
@@ -238,47 +311,43 @@ function drawDataRow(doc, columns, widths, row) {
   }
 
   if (row?.__mergeRest) {
-    const padding = 4;
+    const padding = 3;
+    const fontSize = 7.5;
     const firstWidth = widths[0];
     const restWidth = widths.slice(1).reduce((sum, w) => sum + w, 0);
-    const rowHeight = 20;
 
-    ensurePageSpace(doc, rowHeight);
+    doc.font(getFontName(false)).fontSize(fontSize);
+    const detailsHeight = doc.heightOfString(cellText(row.details), {
+      width: Math.max(restWidth - padding * 2, 20),
+      lineGap: 1,
+    });
+    const rowHeight = Math.max(16, Math.ceil(detailsHeight) + 5);
+
+    ensurePageSpace(doc, rowHeight, () => {
+      drawTableHeader(doc, columns, widths);
+    });
+
     const startX = doc.page.margins.left;
     const startY = doc.y;
-
-    // First cell (amount)
-    doc.save();
-    doc
-      .rect(startX, startY, firstWidth, rowHeight)
-      .fillAndStroke("#ffffff", BORDER_COLOR);
-    doc.restore();
 
     doc.fillColor(TEXT_COLOR);
     drawRichText(doc, cellText(row.amount), {
       x: startX + padding,
       y: startY + 3,
       width: firstWidth - padding * 2,
-      align: "left",
-      fontSize: 8.5,
+      align: "right",
+      fontSize,
       bold: false,
     });
 
-    // Rest cells (details)
     if (restWidth > 0) {
-      doc.save();
-      doc
-        .rect(startX + firstWidth, startY, restWidth, rowHeight)
-        .fillAndStroke("#ffffff", BORDER_COLOR);
-      doc.restore();
-
       doc.fillColor(TEXT_COLOR);
       drawRichText(doc, cellText(row.details), {
         x: startX + firstWidth + padding,
         y: startY + 3,
         width: restWidth - padding * 2,
         align: "left",
-        fontSize: 8.5,
+        fontSize,
         bold: false,
       });
     }
@@ -287,19 +356,20 @@ function drawDataRow(doc, columns, widths, row) {
     return;
   }
 
-  const padding = 4;
+  const padding = 2;
+  const fontSize = 7.5;
   const isHighlighted = Boolean(row?.__highlight);
   const isBold = Boolean(row?.__bold || row?.__highlight);
-  const fill = isHighlighted ? META_FILL : "#ffffff";
   const texts = columns.map((column) => cellText(row?.[column.key] ?? ""));
+
+  doc.font(getFontName(isBold)).fontSize(fontSize);
   const heights = texts.map((text, index) =>
     doc.heightOfString(text, {
-      width: Math.max(widths[index] - padding * 2, 16),
-      fontSize: 8.5,
-      align: "left",
+      width: Math.max(widths[index] - padding * 2, 10),
+      lineGap: 1,
     }),
   );
-  const rowHeight = Math.max(18, ...heights.map((value) => value + 8));
+  const rowHeight = Math.max(16, ...heights.map((value) => Math.ceil(value) + 5));
 
   ensurePageSpace(doc, rowHeight, () => {
     drawTableHeader(doc, columns, widths);
@@ -307,23 +377,26 @@ function drawDataRow(doc, columns, widths, row) {
 
   const startX = doc.page.margins.left;
   const startY = doc.y;
-  let cursorX = startX;
+  const totalWidth = widths.reduce((sum, w) => sum + w, 0);
 
+  if (isHighlighted) {
+    doc.save();
+    doc.rect(startX, startY, totalWidth, rowHeight).fill("#ebebeb");
+    doc.restore();
+  }
+
+  let cursorX = startX;
   columns.forEach((column, index) => {
     const width = widths[index];
-    doc.save();
-    doc
-      .rect(cursorX, startY, width, rowHeight)
-      .fillAndStroke(fill, BORDER_COLOR);
-    doc.restore();
+    const align = getColumnAlign(column.key);
 
     doc.fillColor(TEXT_COLOR);
     drawRichText(doc, texts[index], {
       x: cursorX + padding,
       y: startY + 3,
       width: width - padding * 2,
-      align: "left",
-      fontSize: 8.5,
+      align,
+      fontSize,
       bold: isBold,
     });
 
@@ -336,13 +409,18 @@ function drawDataRow(doc, columns, widths, row) {
 function drawFooterLine(doc, line, totalWidth) {
   const text = getLineValue(line);
   const options = typeof line === "object" && line !== null ? line : {};
+  if (typeof text === "string" && text.replace(/=/g, "").trim() === "") {
+    ensurePageSpace(doc, 8);
+    doc.y += 6;
+    return;
+  }
   drawMergedRow(
     doc,
     text,
     {
       alignment: options.alignment || "center",
       bold: options.bold !== undefined ? options.bold : true,
-      fontSize: options.fontSize || 11,
+      fontSize: options.fontSize || 10,
       height: options.height || 18,
       fill: options.fill,
     },
@@ -398,6 +476,10 @@ function renderSheet(doc, sheetConfig) {
         drawMergedRow(doc, getLineValue(line), line || {}, totalWidth),
       );
 
+      if (sectionHeaderLines.length > 0) {
+        doc.y += 3;
+      }
+
       if (showHeader && sectionColumns.length > 0) {
         drawTableHeader(doc, sectionColumns, sectionWidths);
       }
@@ -421,11 +503,15 @@ function renderSheet(doc, sheetConfig) {
   }
 }
 
-async function sendPdfReport(res, fileName, sheets) {
+async function sendPdfReport(res, fileName, sheets, options = {}) {
+  const layout =
+    String(options?.orientation || "portrait").toLowerCase() === "landscape"
+      ? "landscape"
+      : "portrait";
   const doc = new PDFDocument({
     size: "A4",
-    layout: "portrait",
-    margin: 20,
+    layout,
+    margin: 16,
     bufferPages: true,
     autoFirstPage: true,
   });

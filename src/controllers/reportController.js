@@ -510,7 +510,7 @@ async function fetchOrders(where) {
   });
 }
 
-function buildReportColumns(reportType) {
+function buildReportColumns(reportType, options = {}) {
   const partyColumns =
     reportType === "manufacturer"
       ? [
@@ -523,7 +523,7 @@ function buildReportColumns(reportType) {
           { header: "Manufacturer Name", key: "partyName", width: 24 },
         ];
 
-  return [
+  const cols = [
     { header: "Amount", key: "amount", width: 14 },
     { header: "LOT", key: "lot", width: 12 },
     { header: "Quality", key: "quality", width: 24 },
@@ -532,8 +532,13 @@ function buildReportColumns(reportType) {
     { header: "orderId", key: "orderId", width: 12 },
     { header: "Date", key: "date", width: 14 },
     ...partyColumns,
-    { header: "Payment Status", key: "paymentStatus", width: 16 },
   ];
+
+  if (options.includePaymentStatus !== false) {
+    cols.push({ header: "Payment Status", key: "paymentStatus", width: 16 });
+  }
+
+  return cols;
 }
 
 function orderToReportRow(
@@ -1120,8 +1125,17 @@ async function exportReportByType(req, res, reportType, format = "xlsx") {
     baseFileName = isManufacturerReport ? "All_Manufacturers_Report" : "All_Customers_Report";
   }
 
+  const orientation =
+    String(req.query.orientation || "portrait").toLowerCase() === "landscape"
+      ? "landscape"
+      : "portrait";
+  const hidePaymentStatus =
+    String(req.query.hidePaymentStatus || "").toLowerCase() === "true" ||
+    String(req.query.showPaymentStatus || "").toLowerCase() === "false";
+  const includePaymentStatus = !hidePaymentStatus;
+
   const fileName = `${baseFileName}.${normalizedFormat === "pdf" ? "pdf" : "xlsx"}`;
-  const sheetColumns = buildReportColumns(reportType);
+  const sheetColumns = buildReportColumns(reportType, { includePaymentStatus });
   const headerLines = buildReportHeaderLines(
     req.user,
     selectedParty,
@@ -1259,7 +1273,7 @@ async function exportReportByType(req, res, reportType, format = "xlsx") {
   };
 
   if (normalizedFormat === "pdf") {
-    await sendPdfReport(res, fileName, [sheetConfig]);
+    await sendPdfReport(res, fileName, [sheetConfig], { orientation });
     return;
   }
 
