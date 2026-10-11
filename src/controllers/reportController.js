@@ -684,6 +684,7 @@ function getScopeHeaderLines(party, reportType) {
         fontSize: 11,
         bold: true,
         height: 20,
+        fill: true,
       },
       {
         value: `${partyLabel} Name : ${personName}`,
@@ -691,6 +692,7 @@ function getScopeHeaderLines(party, reportType) {
         fontSize: 11,
         bold: true,
         height: 20,
+        fill: true,
       },
     );
   } else if (firmName && !personName) {
@@ -700,6 +702,7 @@ function getScopeHeaderLines(party, reportType) {
       fontSize: 11,
       bold: true,
       height: 20,
+      fill: true,
     });
   } else {
     lines.push({
@@ -708,6 +711,7 @@ function getScopeHeaderLines(party, reportType) {
       fontSize: 11,
       bold: true,
       height: 20,
+      fill: true,
     });
   }
 
@@ -718,6 +722,7 @@ function getScopeHeaderLines(party, reportType) {
       fontSize: 11,
       bold: true,
       height: 20,
+      fill: true,
     },
     {
       value: `Mobile    : ${String(party?.phone || "-").trim() || "-"}`,
@@ -725,6 +730,7 @@ function getScopeHeaderLines(party, reportType) {
       fontSize: 11,
       bold: true,
       height: 20,
+      fill: true,
     },
   );
 
@@ -746,33 +752,37 @@ function getSelectedPartyHeaderLines(party, reportType) {
       {
         value: `${partyLabel} Firm Name : ${firmName}`,
         alignment: "left",
-        fontSize: 14,
+        fontSize: 11,
         bold: true,
-        height: 24,
+        height: 20,
+        fill: true,
       },
       {
         value: `${partyLabel} Name : ${personName}`,
         alignment: "left",
-        fontSize: 14,
+        fontSize: 11,
         bold: true,
-        height: 24,
+        height: 20,
+        fill: true,
       },
     );
   } else if (firmName && !personName) {
     lines.push({
       value: `${partyLabel} Firm Name : ${firmName}`,
       alignment: "left",
-      fontSize: 14,
+      fontSize: 11,
       bold: true,
-      height: 24,
+      height: 20,
+      fill: true,
     });
   } else {
     lines.push({
       value: `${partyLabel} Name : ${personName || firmName || "-"}`,
       alignment: "left",
-      fontSize: 14,
+      fontSize: 11,
       bold: true,
-      height: 24,
+      height: 20,
+      fill: true,
     });
   }
 
@@ -780,16 +790,18 @@ function getSelectedPartyHeaderLines(party, reportType) {
     {
       value: `Address   : ${String(party?.address || "-").trim() || "-"}`,
       alignment: "left",
-      fontSize: 14,
+      fontSize: 11,
       bold: true,
-      height: 24,
+      height: 20,
+      fill: true,
     },
     {
-      value: `Phone     : ${String(party?.phone || "-").trim() || "-"}`,
+      value: `Mobile    : ${String(party?.phone || "-").trim() || "-"}`,
       alignment: "left",
-      fontSize: 14,
+      fontSize: 11,
       bold: true,
-      height: 24,
+      height: 20,
+      fill: true,
     },
   );
 
@@ -1022,45 +1034,59 @@ function buildReportHeaderLines(user, selectedParty, reportType) {
   const address = String(user?.businessAddress || "").trim();
   const phone = String(user?.contactPhone || "").trim();
 
-  return [
+  const lines = [
     {
       value: firmTitle,
       alignment: "center",
-      fontSize: 14,
+      fontSize: 16,
       bold: true,
-      height: 24,
+      height: 26,
+      fill: false,
     },
     subtitle
       ? {
           value: subtitle,
           alignment: "center",
-          fontSize: 13,
+          fontSize: 12,
           bold: true,
-          height: 24,
+          height: 20,
+          fill: false,
         }
       : null,
     address
       ? {
           value: address,
           alignment: "center",
-          fontSize: 12,
-          bold: true,
-          height: 22,
+          fontSize: 10,
+          bold: false,
+          height: 18,
+          fill: false,
         }
       : null,
     phone
       ? {
           value: phone.startsWith("(M)") ? phone : `(M) ${phone}`,
           alignment: "center",
-          fontSize: 13,
+          fontSize: 11,
           bold: true,
-          height: 24,
+          height: 18,
+          fill: false,
         }
       : null,
-    ...(selectedParty
-      ? getSelectedPartyHeaderLines(selectedParty, reportType)
-      : []),
   ].filter(Boolean);
+
+  if (selectedParty) {
+    lines.push(
+      {
+        value: "",
+        height: 8,
+        fill: false,
+      },
+      ...getSelectedPartyHeaderLines(selectedParty, reportType),
+    );
+  }
+
+  return lines;
 }
 
 async function exportReportByType(req, res, reportType, format = "xlsx") {
@@ -1081,8 +1107,19 @@ async function exportReportByType(req, res, reportType, format = "xlsx") {
     req.user.userId,
   );
 
-  const baseFileName =
-    reportType === "manufacturer" ? "manufacturer-report" : "customer-report";
+  let baseFileName = "";
+  if (selectedParty) {
+    const rawPartyName = String(selectedParty.firmName || selectedParty.name || "").trim();
+    // Sanitize party name for safe filename, replacing commas, symbols, and spaces with a single underscore
+    const safePartyName = rawPartyName
+      .replace(/[\\/:*?"<>|,;.]+/g, "_")
+      .replace(/[\s_]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+    baseFileName = safePartyName || (isManufacturerReport ? "Manufacturer_Report" : "Customer_Report");
+  } else {
+    baseFileName = isManufacturerReport ? "All_Manufacturers_Report" : "All_Customers_Report";
+  }
+
   const fileName = `${baseFileName}.${normalizedFormat === "pdf" ? "pdf" : "xlsx"}`;
   const sheetColumns = buildReportColumns(reportType);
   const headerLines = buildReportHeaderLines(

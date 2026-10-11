@@ -225,7 +225,11 @@ async function sendWorkbook(res, fileName, sheets) {
     "Content-Type",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   );
-  res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+  const encodedFileName = encodeURIComponent(fileName);
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="${fileName.replace(/"/g, '')}"; filename*=UTF-8''${encodedFileName}`
+  );
 
   await workbook.xlsx.write(res);
   res.end();
