@@ -82,6 +82,11 @@ function round2(value) {
   return Math.round(value * 100) / 100;
 }
 
+function roundQuarter(value) {
+  const num = Number(value || 0);
+  return Math.round(num * 4) / 4;
+}
+
 function roundCurrency(value) {
   return Math.round(Number(value || 0));
 }
@@ -323,15 +328,15 @@ function isOrderNoUniqueConflict(error) {
 
 function toMeterFromQuantity({ quantity, quantityUnit, lotMeters }) {
   if (quantityUnit === QUANTITY_UNITS.METER) {
-    return quantity;
+    return roundQuarter(quantity);
   }
   if (!Number.isFinite(lotMeters) || lotMeters <= 0) {
     throw new AppError("lot meter value is required for TAKKA/LOT conversion", 400);
   }
   if (quantityUnit === QUANTITY_UNITS.LOT) {
-    return quantity * lotMeters;
+    return roundQuarter(quantity * lotMeters);
   }
-  return quantity * (lotMeters / TAKKA_PER_LOT);
+  return roundQuarter(quantity * (lotMeters / TAKKA_PER_LOT));
 }
 
 function toQuantityFromMeter({ meter, quantityUnit, lotMeters }) {

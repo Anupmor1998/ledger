@@ -153,17 +153,22 @@ function roundCurrency(value) {
   return Math.round(Number(value || 0));
 }
 
+function roundQuarter(value) {
+  const num = Number(value || 0);
+  return Math.round(num * 4) / 4;
+}
+
 function toMeterFromQuantity({ quantity, quantityUnit, lotMeters }) {
   if (quantityUnit === "METER") {
-    return quantity;
+    return roundQuarter(quantity);
   }
   if (!Number.isFinite(lotMeters) || lotMeters <= 0) {
     throw new AppError("lot meter value is required for TAKKA/LOT conversion", 400);
   }
   if (quantityUnit === "LOT") {
-    return quantity * lotMeters;
+    return roundQuarter(quantity * lotMeters);
   }
-  return quantity * (lotMeters / TAKKA_PER_LOT);
+  return roundQuarter(quantity * (lotMeters / TAKKA_PER_LOT));
 }
 
 function computeCommissionAmountForOrder(order, commissionConfig) {

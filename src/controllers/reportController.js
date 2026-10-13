@@ -427,7 +427,9 @@ function computeLotValue(order) {
 }
 
 function computeMeterValue(order) {
-  return round2(safeNumber(order.processedMeter));
+  const processed = safeNumber(order?.processedMeter);
+  if (processed > 0) return round2(processed);
+  return round2(safeNumber(order?.meter));
 }
 
 async function getSelectedFinancialYearStartForUser(userId) {
@@ -470,6 +472,7 @@ async function getSelectedReportParty(query, reportType, userId) {
     name: true,
     address: true,
     phone: true,
+    commissionBase: true,
   };
 
   return isManufacturerReport
@@ -527,12 +530,18 @@ function buildReportColumns(reportType, options = {}) {
     { header: "Amount", key: "amount", width: 14 },
     { header: "LOT", key: "lot", width: 12 },
     { header: "Quality", key: "quality", width: 24 },
-    { header: "Meter", key: "meter", width: 14 },
+  ];
+
+  if (options.includeMeter !== false) {
+    cols.push({ header: "Meter", key: "meter", width: 14 });
+  }
+
+  cols.push(
     { header: "Rate", key: "rate", width: 12 },
     { header: "orderId", key: "orderId", width: 12 },
     { header: "Date", key: "date", width: 14 },
     ...partyColumns,
-  ];
+  );
 
   if (options.includePaymentStatus !== false) {
     cols.push({ header: "Payment Status", key: "paymentStatus", width: 16 });
@@ -575,11 +584,19 @@ function orderToReportRow(
       ? order.manufacturerCommissionAmount ?? 0
       : order.commissionAmount ?? 0;
 
+  // If the party's commission basis is LOT, meter is not used in commission calculation
+  const scopeParty =
+    reportType === "manufacturer" ? order.manufacturer : order.customer;
+  const isLotBasis =
+    String(scopeParty?.commissionBase || "").toUpperCase() === "LOT";
+
+  const meterValue = isLotBasis ? "" : computeMeterValue(order).toFixed(2);
+
   return {
     amount: roundCurrency(commissionAmount),
     lot: computeLotValue(order),
     quality: order.quality?.name || "",
-    meter: computeMeterValue(order).toFixed(2),
+    meter: meterValue,
     rate: round2(order.rate).toFixed(2),
     orderId: order.orderNo,
     date: formatCellDate(order.orderDate),
@@ -1133,9 +1150,16 @@ async function exportReportByType(req, res, reportType, format = "xlsx") {
     String(req.query.hidePaymentStatus || "").toLowerCase() === "true" ||
     String(req.query.showPaymentStatus || "").toLowerCase() === "false";
   const includePaymentStatus = !hidePaymentStatus;
+  const isPartyLotBasis =
+    selectedParty &&
+    String(selectedParty.commissionBase || "").toUpperCase() === "LOT";
+  const includeMeter = !isPartyLotBasis;
 
   const fileName = `${baseFileName}.${normalizedFormat === "pdf" ? "pdf" : "xlsx"}`;
-  const sheetColumns = buildReportColumns(reportType, { includePaymentStatus });
+  const sheetColumns = buildReportColumns(reportType, {
+    includePaymentStatus,
+    includeMeter,
+  });
   const headerLines = buildReportHeaderLines(
     req.user,
     selectedParty,
