@@ -427,7 +427,9 @@ function computeLotValue(order) {
 }
 
 function computeMeterValue(order) {
-  return round2(safeNumber(order.processedMeter));
+  const processed = safeNumber(order?.processedMeter);
+  if (processed > 0) return round2(processed);
+  return round2(safeNumber(order?.meter));
 }
 
 async function getSelectedFinancialYearStartForUser(userId) {
