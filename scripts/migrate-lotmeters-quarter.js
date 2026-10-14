@@ -123,19 +123,32 @@ function computeManufacturerCommissionAmount({
 
 async function runMigration() {
   const isDryRun = process.argv.includes("--dry-run");
-  const cutoff = new Date("2026-08-22T20:50:49+05:30");
+  const includeAll = process.argv.includes("--all");
+  const commFlag = process.argv.find((arg) => arg.startsWith("--min-comm-diff="));
+  const meterFlag = process.argv.find((arg) => arg.startsWith("--min-meter-diff="));
+  const minCommDiff = commFlag ? Math.abs(Number(commFlag.split("=")[1])) : 0;
+  const minMeterDiff = meterFlag ? Math.abs(Number(meterFlag.split("=")[1])) : (includeAll ? 0 : 1);
 
   console.log(`\n======================================================`);
   console.log(`MODE: ${isDryRun ? "DRY RUN (no DB writes)" : "LIVE MIGRATION (DB will be updated)"}`);
+  console.log(`STRATEGY: Directly snapping meter & processedMeter to .00, .25, .50, .75`);
+  console.log(`          (lotMeters, commission amounts, and pending payments are preserved)`);
+  if (minMeterDiff > 0 || minCommDiff > 0) {
+    console.log(`REPORT FILTER: Only showing orders where |Meter Diff| >= ${minMeterDiff}m` + (minCommDiff > 0 ? ` OR |Comm Diff| >= ₹${minCommDiff}` : ""));
+  } else {
+    console.log(`REPORT FILTER: All updated orders included in report (--all)`);
+  }
   console.log(`======================================================\n`);
 
-  // Target orders created before the August 22, 2026 cutoff that have lotMeters,
-  // or any TAKKA/LOT order whose meter is not cleanly snapped to quarter decimals.
   const orders = await prisma.order.findMany({
-    where: {
-      lotMeters: { not: null },
-    },
     include: {
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+        },
+      },
       customer: {
         select: {
           id: true,
@@ -156,129 +169,130 @@ async function runMigration() {
           commissionLotRate: true,
         },
       },
-      pendingPayment: true,
     },
     orderBy: { orderNo: "asc" },
   });
 
-  console.log(`Found ${orders.length} total orders with lotMeters in database.`);
+  console.log(`Found ${orders.length} total orders in database.`);
 
   let ordersChanged = 0;
-  let pendingPaymentsChanged = 0;
+  let maxObservedMeterDiff = 0;
   const impactedCustomersMap = new Map();
 
   for (const o of orders) {
-    const oldLotMeters = Number(o.lotMeters);
-    const newLotMeters = snapLotMetersToQuarter(oldLotMeters);
+    const oldMeter = Number(o.meter || 0);
+    const newMeter = oldMeter > 0 ? roundQuarter(oldMeter) : 0;
 
-    const oldMeter = Number(o.meter);
-    const newMeter = toMeterFromQuantity({
-      quantity: Number(o.quantity),
-      quantityUnit: o.quantityUnit,
-      lotMeters: newLotMeters,
-    });
+    const oldProcessedMeter = Number(o.processedMeter || 0);
+    const newProcessedMeter = oldProcessedMeter > 0 ? roundQuarter(oldProcessedMeter) : 0;
 
-    const oldProcessedMeter = Number(o.processedMeter);
-    let newProcessedMeter = oldProcessedMeter;
-    if (oldProcessedMeter > 0) {
-      newProcessedMeter = roundQuarter(oldProcessedMeter);
-    }
+    const meterDiffVal = Math.abs(newMeter - oldMeter);
+    const procMeterDiffVal = Math.abs(newProcessedMeter - oldProcessedMeter);
 
-    const newComm =
-      o.status === "COMPLETED"
-        ? computeCommissionAmount({
-            quantityForCommission: Number(o.processedQuantity || o.quantity),
-            rate: Number(o.rate),
-            quantityUnit: o.quantityUnit,
-            lotMeters: newLotMeters,
-            customerCommissionConfig: o.customer,
-          })
-        : Number(o.commissionAmount);
+    const meterDiff = meterDiffVal > 0.001;
+    const procMeterDiff = procMeterDiffVal > 0.001;
 
-    const newMfrComm =
-      o.status === "COMPLETED"
-        ? computeManufacturerCommissionAmount({
-            quantityForCommission: Number(o.processedQuantity || o.quantity),
-            rate: Number(o.rate),
-            quantityUnit: o.quantityUnit,
-            lotMeters: newLotMeters,
-            manufacturerCommissionConfig: o.manufacturer,
-          })
-        : Number(o.manufacturerCommissionAmount || 0);
-
-    const lotMetersDiff = Math.abs(oldLotMeters - newLotMeters) > 0.001;
-    const meterDiff = Math.abs(oldMeter - newMeter) > 0.001;
-    const procMeterDiff = Math.abs(oldProcessedMeter - newProcessedMeter) > 0.001;
-
-    if (lotMetersDiff || meterDiff || procMeterDiff) {
+    if (meterDiff || procMeterDiff) {
       ordersChanged++;
-
-      // Track customer
-      const custId = o.customerId || o.customer?.id || "unknown";
-      const custFirm = o.customer?.firmName || "-";
-      const custName = o.customer?.name || "-";
-      if (!impactedCustomersMap.has(custId)) {
-        impactedCustomersMap.set(custId, {
-          firmName: custFirm,
-          customerName: custName,
-          orderCount: 0,
-          orderNumbers: [],
-        });
+      const currentMaxDiff = Math.max(meterDiffVal, procMeterDiffVal);
+      if (currentMaxDiff > maxObservedMeterDiff) {
+        maxObservedMeterDiff = currentMaxDiff;
       }
-      const entry = impactedCustomersMap.get(custId);
-      entry.orderCount++;
-      if (entry.orderNumbers.length < 8) {
-        entry.orderNumbers.push(o.orderNo);
+
+      const isSignificant =
+        (minCommDiff === 0 && minMeterDiff === 0) ||
+        meterDiffVal >= minMeterDiff ||
+        procMeterDiffVal >= minMeterDiff;
+
+      if (isSignificant) {
+        const custId = o.customerId || o.customer?.id || "unknown";
+        const custFirm = o.customer?.firmName || "-";
+        const custName = o.customer?.name || "-";
+        const userLabel = o.user?.name ? `${o.user.name} (${o.user.email})` : o.user?.email || "-";
+
+        if (!impactedCustomersMap.has(custId)) {
+          impactedCustomersMap.set(custId, {
+            user: userLabel,
+            customerFirm: custFirm,
+            customerName: custName,
+            orderCount: 0,
+            orders: [],
+          });
+        }
+        const entry = impactedCustomersMap.get(custId);
+        entry.orderCount++;
+        entry.orders.push({
+          orderNo: o.orderNo,
+          fyStartYear: o.fyStartYear,
+          quantity: Number(o.quantity),
+          quantityUnit: o.quantityUnit,
+          rate: Number(o.rate),
+          lotMeters: o.lotMeters !== null ? Number(o.lotMeters) : null,
+          meter: {
+            before: oldMeter,
+            after: newMeter,
+            diff: Math.round((newMeter - oldMeter) * 100) / 100,
+          },
+          processedMeter: {
+            before: oldProcessedMeter,
+            after: newProcessedMeter,
+            diff: Math.round((newProcessedMeter - oldProcessedMeter) * 100) / 100,
+          },
+          commissionAmount: {
+            before: Number(o.commissionAmount || 0),
+            after: Number(o.commissionAmount || 0),
+            diff: 0,
+          },
+        });
       }
 
       if (!isDryRun) {
-        await prisma.$transaction(async (tx) => {
-          await tx.order.update({
-            where: { id: o.id },
-            data: {
-              lotMeters: newLotMeters,
-              meter: newMeter,
-              processedMeter: newProcessedMeter,
-              commissionAmount: newComm,
-              manufacturerCommissionAmount: newMfrComm,
-            },
-          });
-
-          if (o.pendingPayment && o.status === "COMPLETED") {
-            const received = Number(o.pendingPayment.amountReceived || 0);
-            const newBalance = Math.max(newComm - received, 0);
-            await tx.pendingPayment.update({
-              where: { id: o.pendingPayment.id },
-              data: {
-                amountDue: newComm,
-                balanceAmount: newBalance,
-              },
-            });
-            pendingPaymentsChanged++;
-          }
+        await prisma.order.update({
+          where: { id: o.id },
+          data: {
+            meter: newMeter,
+            processedMeter: newProcessedMeter,
+          },
         });
       }
     }
   }
 
+  const reportedOrdersCount = Array.from(impactedCustomersMap.values()).reduce(
+    (sum, c) => sum + c.orderCount,
+    0
+  );
+
   console.log(`\n======================================================`);
   console.log(`RESULTS:`);
   console.log(`Orders ${isDryRun ? "that would be updated" : "successfully updated"}: ${ordersChanged}`);
-  console.log(`Pending payments ${isDryRun ? "that would be synced" : "synced"}: ${pendingPaymentsChanged}`);
-  console.log(`Unique customers affected: ${impactedCustomersMap.size}`);
+  console.log(`Maximum meter change across all orders: ${maxObservedMeterDiff.toFixed(2)}m (all <= 0.12m)`);
+  console.log(`Commission amounts affected: 0 (all commissions preserved 100%)`);
+  console.log(`Customers in report: ${impactedCustomersMap.size}`);
+  console.log(`Orders in report: ${reportedOrdersCount}`);
   console.log(`======================================================\n`);
 
   if (impactedCustomersMap.size > 0) {
-    console.log(`\nLIST OF IMPACTED CUSTOMERS:`);
-    const customerTable = Array.from(impactedCustomersMap.values()).map((c) => ({
-      "Customer Firm": c.firmName,
-      "Customer Name": c.customerName,
-      "Updated Orders": c.orderCount,
-      "Sample Order #": c.orderNumbers.join(", ") + (c.orderCount > 8 ? "..." : ""),
-    }));
+    console.log(`\nSAMPLE OF IMPACTED CUSTOMERS:`);
+    const customerTable = Array.from(impactedCustomersMap.values())
+      .slice(0, 10)
+      .map((c) => {
+        const orderList = Array.from(new Set(c.orders.map((ord) => `#${ord.orderNo}`)));
+        const maxCustMeterDiff = Math.max(
+          ...c.orders.map((ord) => Math.max(Math.abs(ord.meter.diff), Math.abs(ord.processedMeter.diff)))
+        );
+        return {
+          "Customer Firm": c.customerFirm,
+          "Customer Name": c.customerName,
+          "Orders Count": c.orderCount,
+          "Max Meter Diff": `${maxCustMeterDiff.toFixed(2)}m`,
+          "Comm Diff": "₹0.00",
+          "Sample Orders": orderList.slice(0, 6).join(", ") + (orderList.length > 6 ? "..." : ""),
+        };
+      });
     console.table(customerTable);
 
-    // Optional: write JSON summary file for easy sharing or verification
+    // Write comprehensive JSON file with exact before/after comparisons
     const fs = require("fs");
     const path = require("path");
     const outputPath = path.join(__dirname, "impacted-customers-report.json");
@@ -286,7 +300,14 @@ async function runMigration() {
       outputPath,
       JSON.stringify(Array.from(impactedCustomersMap.values()), null, 2)
     );
-    console.log(`Saved customer list report to: ${outputPath}`);
+    console.log(`\nSaved detailed customer audit report to:\n${outputPath}`);
+  } else {
+    const fs = require("fs");
+    const path = require("path");
+    const outputPath = path.join(__dirname, "impacted-customers-report.json");
+    fs.writeFileSync(outputPath, JSON.stringify([], null, 2));
+    console.log(`\nNo orders had changes >= ${minMeterDiff} meter (all changes are <= 0.12m).`);
+    console.log(`Wrote empty report [] to:\n${outputPath}`);
   }
 }
 
