@@ -130,10 +130,14 @@ function buildOrderDetailLines(order, paymentDueDays, recipient, mergedRemark) {
 function buildManufacturerMessage(order) {
   const paymentDueDays = resolvePaymentDueDays(order, { addExtraDays: 5 });
   const mergedRemark = buildMergedRemark(order, "MANUFACTURER");
+  const displayOrderNo = order.originalOrderNo || order.orderNo;
+  const orderDateStr = order.originalOrderDate
+    ? `${formatDate(order.orderDate)} (Orig: ${formatDate(order.originalOrderDate)})`
+    : formatDate(order.orderDate);
 
   return [
-    `Order No: ${order.orderNo}`,
-    `Date: ${formatDate(order.orderDate)}`,
+    `Order No: ${displayOrderNo}`,
+    `Date: ${orderDateStr}`,
     "",
     `Party: ${buildPartyDisplay(order)}`,
     `Contact No: ${buildCustomerContactLine(order)}`,
@@ -158,10 +162,14 @@ function buildManufacturerMessage(order) {
 function buildCustomerMessage(order) {
   const paymentDueDays = resolvePaymentDueDays(order);
   const mergedRemark = buildMergedRemark(order, "CUSTOMER");
+  const displayOrderNo = order.originalOrderNo || order.orderNo;
+  const orderDateStr = order.originalOrderDate
+    ? `${formatDate(order.orderDate)} (Orig: ${formatDate(order.originalOrderDate)})`
+    : formatDate(order.orderDate);
 
   return [
-    `*Order No:* ${order.orderNo}`,
-    `*Date:* ${formatDate(order.orderDate)}`,
+    `*Order No:* ${displayOrderNo}`,
+    `*Date:* ${orderDateStr}`,
     "",
     `*Party:* ${buildPartyDisplay(order)}`,
     `*GST:* ${order.customer?.gstNo || "-"}`,

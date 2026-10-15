@@ -45,6 +45,8 @@ function normalizeOrder(order) {
     progressCommissionAmount,
     manufacturerCommissionAmount: normalizedManufacturerCommissionAmount,
     progressManufacturerCommissionAmount,
+    originalOrderNo: order.originalOrderNo ?? order.carriedForwardFromOrder?.orderNo ?? null,
+    originalOrderDate: order.originalOrderDate ?? order.carriedForwardFromOrder?.orderDate ?? null,
     whatsappMessages: buildOrderWhatsAppMessages(order),
     whatsappLinks: buildOrderWhatsAppLinks(order),
   };
@@ -59,6 +61,7 @@ const ORDER_STATUS = {
   PENDING: "PENDING",
   COMPLETED: "COMPLETED",
   CANCELLED: "CANCELLED",
+  TRANSFERRED: "TRANSFERRED",
 };
 const TAKKA_PER_LOT = 12;
 const LOT_MIN_METERS = 1400;
@@ -232,12 +235,17 @@ function resolveOrderActivityAction(beforeStatus, afterStatus, updateData) {
   }
   if (
     normalizedAfter === ORDER_STATUS.PENDING &&
-    (normalizedBefore === ORDER_STATUS.COMPLETED || normalizedBefore === ORDER_STATUS.CANCELLED)
+    (normalizedBefore === ORDER_STATUS.COMPLETED ||
+      normalizedBefore === ORDER_STATUS.CANCELLED ||
+      normalizedBefore === ORDER_STATUS.TRANSFERRED)
   ) {
     return ORDER_ACTIVITY_ACTIONS.REOPENED;
   }
   if (normalizedAfter === ORDER_STATUS.CANCELLED) {
     return ORDER_ACTIVITY_ACTIONS.CANCELLED;
+  }
+  if (normalizedAfter === ORDER_STATUS.TRANSFERRED) {
+    return ORDER_ACTIVITY_ACTIONS.TRANSFERRED;
   }
   if (
     updateData.processedQuantity !== undefined ||
@@ -1432,7 +1440,7 @@ const updateOrder = asyncHandler(async (req, res) => {
     status !== undefined &&
     !Object.values(ORDER_STATUS).includes(String(status).toUpperCase())
   ) {
-    throw new AppError("status must be one of: PENDING, COMPLETED, CANCELLED", 400);
+    throw new AppError("status must be one of: PENDING, COMPLETED, CANCELLED, TRANSFERRED", 400);
   }
   if (
     deliveryDateFrom !== undefined &&

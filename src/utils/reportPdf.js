@@ -22,7 +22,7 @@ const COLUMN_FIXED_WIDTHS = {
   meter: 48,
   rate: 28,
   orderId: 34,
-  date: 48,
+  date: 66,
   paymentStatus: 64,
 };
 

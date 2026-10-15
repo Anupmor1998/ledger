@@ -1,0 +1,7 @@
+-- AlterEnum
+ALTER TYPE "OrderStatus" ADD VALUE IF NOT EXISTS 'TRANSFERRED';
+
+-- AlterTable Order
+ALTER TABLE "Order" ADD COLUMN IF NOT EXISTS "originalOrderNo" INTEGER;
+ALTER TABLE "Order" ADD COLUMN IF NOT EXISTS "originalOrderDate" TIMESTAMP(3);
+
