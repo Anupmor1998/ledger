@@ -655,6 +655,7 @@ const getYearTransferBatchDetails = asyncHandler(async (req, res) => {
           carriedForwardFromOrder: {
             select: {
               orderNo: true,
+              orderDate: true,
               fyStartYear: true,
             },
           },
@@ -726,7 +727,10 @@ const getYearTransferBatchDetails = asyncHandler(async (req, res) => {
     carriedOrders: batch.carriedOrders.map((order) => ({
       id: order.id,
       orderNo: order.orderNo,
+      originalOrderNo: order.originalOrderNo || order.carriedForwardFromOrder?.orderNo || order.orderNo,
+      originalOrderDate: order.originalOrderDate || order.carriedForwardFromOrder?.orderDate || null,
       sourceOrderNo: order.carriedForwardFromOrder?.orderNo || null,
+      sourceOrderDate: order.carriedForwardFromOrder?.orderDate || null,
       sourceOrderFyLabel: order.carriedForwardFromOrder?.fyStartYear
         ? getFinancialYearLabel(order.carriedForwardFromOrder.fyStartYear)
         : null,
@@ -935,6 +939,28 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
         ? `Carry forward note: source remaining quantity ${remainingQuantity.toFixed(2)} ${order.quantityUnit}; carried as ${carryQuantity} ${order.quantityUnit} in ${getFinancialYearLabel(targetFyStartYear)}.`
         : null;
 
+      // Preserve source order number if not already taken in target financial year
+      let targetOrderNo = order.orderNo;
+      if (sourceFyStartYear === targetFyStartYear) {
+        targetOrderNo = nextOrderNo;
+        nextOrderNo += 1;
+      } else {
+        const existingWithNo = await tx.order.findUnique({
+          where: {
+            userId_fyStartYear_orderNo: {
+              userId,
+              fyStartYear: targetFyStartYear,
+              orderNo: order.orderNo,
+            },
+          },
+          select: { id: true },
+        });
+        if (existingWithNo) {
+          targetOrderNo = nextOrderNo;
+          nextOrderNo += 1;
+        }
+      }
+
       const createdOrder = await tx.order.create({
         data: {
           userId,
@@ -961,7 +987,9 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
           deliveryDateFrom: order.deliveryDateFrom,
           deliveryDateTo: order.deliveryDateTo,
           fyStartYear: targetFyStartYear,
-          orderNo: nextOrderNo,
+          orderNo: targetOrderNo,
+          originalOrderNo: order.originalOrderNo || order.orderNo,
+          originalOrderDate: order.originalOrderDate || order.orderDate,
           isCarryForward: true,
           carriedForwardFromOrderId: order.id,
           transferBatchId: batch.id,
@@ -974,6 +1002,29 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
         },
       });
 
+      // Mark source order as TRANSFERRED
+      await tx.order.update({
+        where: { id: order.id },
+        data: {
+          status: "TRANSFERRED",
+        },
+      });
+
+      await recordOrderActivity(tx, {
+        userId,
+        orderId: order.id,
+        action: ORDER_ACTIVITY_ACTIONS.TRANSFERRED,
+        beforeData: { status: "PENDING" },
+        afterData: { status: "TRANSFERRED" },
+        metadata: {
+          targetOrderId: createdOrder.id,
+          targetOrderNo,
+          targetFyStartYear,
+          transferBatchId: batch.id,
+          periodType,
+        },
+      });
+
       await recordOrderActivity(tx, {
         userId,
         orderId: createdOrder.id,
@@ -982,6 +1033,7 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
         afterData: buildOrderAuditSnapshot(createdOrder),
         metadata: {
           sourceOrderId: order.id,
+          sourceOrderNo: order.orderNo,
           sourceFyStartYear: order.fyStartYear,
           targetFyStartYear,
           transferBatchId: batch.id,
@@ -990,7 +1042,6 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
       });
 
       carriedOrderBySourceId.set(order.id, createdOrder.id);
-      nextOrderNo += 1;
     }
 
     for (const payment of eligiblePendingPayments) {
@@ -1012,6 +1063,28 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
 
         if (!sourceOrder) {
           throw new AppError("source order for pending payment was not found", 404);
+        }
+
+        // Preserve source order number if not already taken in target financial year
+        let targetOrderNo = sourceOrder.orderNo;
+        if (sourceFyStartYear === targetFyStartYear) {
+          targetOrderNo = nextOrderNo;
+          nextOrderNo += 1;
+        } else {
+          const existingWithNo = await tx.order.findUnique({
+            where: {
+              userId_fyStartYear_orderNo: {
+                userId,
+                fyStartYear: targetFyStartYear,
+                orderNo: sourceOrder.orderNo,
+              },
+            },
+            select: { id: true },
+          });
+          if (existingWithNo) {
+            targetOrderNo = nextOrderNo;
+            nextOrderNo += 1;
+          }
         }
 
         const createdOrder = await tx.order.create({
@@ -1038,7 +1111,9 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
             deliveryDateFrom: sourceOrder.deliveryDateFrom,
             deliveryDateTo: sourceOrder.deliveryDateTo,
             fyStartYear: targetFyStartYear,
-            orderNo: nextOrderNo,
+            orderNo: targetOrderNo,
+            originalOrderNo: sourceOrder.originalOrderNo || sourceOrder.orderNo,
+            originalOrderDate: sourceOrder.originalOrderDate || sourceOrder.orderDate,
             isCarryForward: true,
             carriedForwardFromOrderId: sourceOrder.id,
             transferBatchId: batch.id,
@@ -1059,6 +1134,7 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
           afterData: buildOrderAuditSnapshot(createdOrder),
           metadata: {
             sourceOrderId: sourceOrder.id,
+            sourceOrderNo: sourceOrder.orderNo,
             sourceFyStartYear: sourceOrder.fyStartYear,
             targetFyStartYear,
             transferBatchId: batch.id,
@@ -1068,7 +1144,6 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
 
         targetOrderId = createdOrder.id;
         carriedOrderBySourceId.set(sourceOrder.id, createdOrder.id);
-        nextOrderNo += 1;
       }
 
       await tx.pendingPayment.create({
@@ -1131,6 +1206,7 @@ const undoYearTransferBatch = asyncHandler(async (req, res) => {
                 transferBatchId: true,
               },
             },
+            carriedForwardFromOrderId: true,
             carriedForwardOrders: {
               select: {
                 id: true,
@@ -1182,6 +1258,36 @@ const undoYearTransferBatch = asyncHandler(async (req, res) => {
           transferBatchId: batch.id,
         },
       });
+    }
+
+    // Revert all source orders' status back to PENDING
+    const sourceOrderIds = batch.carriedOrders
+      .map((order) => order.carriedForwardFromOrderId)
+      .filter(Boolean);
+
+    if (sourceOrderIds.length > 0) {
+      await tx.order.updateMany({
+        where: {
+          id: { in: sourceOrderIds },
+          userId,
+        },
+        data: {
+          status: "PENDING",
+        },
+      });
+
+      for (const sourceId of sourceOrderIds) {
+        await recordOrderActivity(tx, {
+          userId,
+          orderId: sourceId,
+          action: ORDER_ACTIVITY_ACTIONS.REOPENED,
+          beforeData: { status: "TRANSFERRED" },
+          afterData: { status: "PENDING" },
+          metadata: {
+            undoneBatchId: batch.id,
+          },
+        });
+      }
     }
 
     if (carriedOrderIds.length > 0) {

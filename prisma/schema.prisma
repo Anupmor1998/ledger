@@ -166,6 +166,8 @@ model Order {
   orderNo                   Int
   isCarryForward            Boolean                  @default(false)
   carriedForwardFromOrderId String?
+  originalOrderNo           Int?
+  originalOrderDate         DateTime?
   transferBatchId           String?
   orderDate                 DateTime
   createdAt                 DateTime                 @default(now())
@@ -281,6 +283,7 @@ enum OrderStatus {
   PENDING
   COMPLETED
   CANCELLED
+  TRANSFERRED
 }
 
 enum PaymentMode {

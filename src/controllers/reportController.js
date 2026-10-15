@@ -12,6 +12,7 @@ const ORDER_STATUS = {
   PENDING: "PENDING",
   COMPLETED: "COMPLETED",
   CANCELLED: "CANCELLED",
+  TRANSFERRED: "TRANSFERRED",
 };
 
 const REPORT_STATUS = {
@@ -539,7 +540,7 @@ function buildReportColumns(reportType, options = {}) {
   cols.push(
     { header: "Rate", key: "rate", width: 12 },
     { header: "orderId", key: "orderId", width: 12 },
-    { header: "Date", key: "date", width: 14 },
+    { header: "Date", key: "date", width: 22 },
     ...partyColumns,
   );
 
@@ -592,14 +593,24 @@ function orderToReportRow(
 
   const meterValue = isLotBasis ? "" : computeMeterValue(order).toFixed(2);
 
+  const displayOrderNo = order.originalOrderNo || order.orderNo;
+  const transferDateStr = formatCellDate(order.orderDate);
+  const originalDateStr = order.originalOrderDate
+    ? formatCellDate(order.originalOrderDate)
+    : "";
+  const displayDate =
+    originalDateStr && originalDateStr !== transferDateStr
+      ? `${transferDateStr} (${originalDateStr})`
+      : transferDateStr;
+
   return {
     amount: roundCurrency(commissionAmount),
     lot: computeLotValue(order),
     quality: order.quality?.name || "",
     meter: meterValue,
     rate: round2(order.rate).toFixed(2),
-    orderId: order.orderNo,
-    date: formatCellDate(order.orderDate),
+    orderId: displayOrderNo,
+    date: displayDate,
     partyFirmName,
     partyName: party?.name || "",
     manufacturerFirmName: resolvedManufacturerFirm,
