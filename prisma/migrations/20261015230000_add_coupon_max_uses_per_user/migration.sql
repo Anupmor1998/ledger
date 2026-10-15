@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Coupon" ADD COLUMN "maxUsesPerUser" INTEGER NOT NULL DEFAULT 1;
+

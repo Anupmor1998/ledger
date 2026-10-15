@@ -12,6 +12,7 @@ const {
   getInAppReminders,
   testSwitchPlan,
 } = require("../controllers/subscriptionController");
+const { validateCoupon, getAvailableCoupons } = require("../controllers/couponController");
 
 const router = express.Router();
 
@@ -23,8 +24,10 @@ router.use(authMiddleware);
 
 router.get("/status", getSubscriptionStatus);
 router.get("/reminders", getInAppReminders);
+router.get("/available-coupons", getAvailableCoupons);
 router.post("/test-switch-plan", testSwitchPlan);
 router.post("/preview", previewSubscriptionOrder);
+router.post("/validate-coupon", validateCoupon);
 router.post("/create-order", createSubscriptionOrder);
 router.post("/verify-payment", verifySubscriptionPayment);
 router.post("/fail-order", failSubscriptionOrder);
