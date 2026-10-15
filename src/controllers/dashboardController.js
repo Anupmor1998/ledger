@@ -1,7 +1,11 @@
 const { Prisma } = require("@prisma/client");
 const prisma = require("../config/prisma");
 const AppError = require("../utils/appError");
-const { getFinancialYearStartYear, getFinancialYearLabel } = require("../utils/financialYear");
+const {
+  getFinancialYearStartYear,
+  getFinancialYearLabel,
+  APP_INCEPTION_FY_START_YEAR,
+} = require("../utils/financialYear");
 
 function formatDateKey(date) {
   const year = date.getFullYear();
@@ -142,7 +146,9 @@ const getDashboardSummary = require("../utils/asyncHandler")(async (req, res) =>
       userSelectedFinancialYearStart,
       requestedFinancialYearStart,
     ])
-  ).sort((a, b) => a - b);
+  )
+    .filter((fy) => Number(fy) >= APP_INCEPTION_FY_START_YEAR)
+    .sort((a, b) => a - b);
 
   const selectedFinancialYearStart = requestedFinancialYearStart;
   const fyBounds = getFinancialYearBounds(selectedFinancialYearStart);
@@ -226,7 +232,7 @@ const getDashboardSummary = require("../utils/asyncHandler")(async (req, res) =>
   const totalCommissionAmount =
     openPendingCommissionAmount + completedCommissionAmount + cancelledCommissionAmount;
 
-  const yearlyStart = Math.max(selectedFinancialYearStart - 4, getFinancialYearStartYear());
+  const yearlyStart = Math.max(selectedFinancialYearStart - 4, APP_INCEPTION_FY_START_YEAR);
   const yearlyOrdersSource = await prisma.order.findMany({
     where: {
       userId: req.user.userId,
