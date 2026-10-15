@@ -11,89 +11,8 @@ const logger = require("../utils/logger");
 const { sendSubscriptionInvoicePdf } = require("../utils/invoicePdf");
 const { getSubscriptionDetails } = require("../middlewares/subscriptionGatingMiddleware");
 
-const PLAN_PRICING = {
-  STARTER: {
-    name: "Starter",
-    monthly: 99,
-    yearly: 990,
-  },
-  GROWTH: {
-    name: "Growth / Budget",
-    monthly: 299,
-    yearly: 2990,
-  },
-  PREMIUM: {
-    name: "Premium",
-    monthly: 399,
-    yearly: 3990,
-  },
-};
-
-/**
- * Calculate prepaid proration credit when upgrading from an active plan
- */
-function calculateProrationCredit(user, targetPlan, targetCycle) {
-  const currentPlan = user.subscriptionPlan;
-  const currentCycle = user.billingCycle || "MONTHLY";
-  const now = new Date();
-
-  // If user is on trial, has no plan expiry date, or plan has already expired: 0 credit
-  if (!user.planExpiresAt || currentPlan === "TRIAL") {
-    return {
-      unusedCredit: 0,
-      remainingDays: 0,
-      isUpgrade: false,
-    };
-  }
-
-  const expiry = new Date(user.planExpiresAt);
-  if (expiry <= now) {
-    return {
-      unusedCredit: 0,
-      remainingDays: 0,
-      isUpgrade: false,
-    };
-  }
-
-  const diffMs = expiry.getTime() - now.getTime();
-  const remainingDays = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
-
-  // If renewing the exact same plan and cycle: standard renewal, no proration
-  const isSamePlanAndCycle = currentPlan === targetPlan && currentCycle === targetCycle;
-  if (isSamePlanAndCycle) {
-    return {
-      unusedCredit: 0,
-      remainingDays,
-      isUpgrade: false,
-    };
-  }
-
-  // Calculate daily rate of current plan
-  const currentTierPricing = PLAN_PRICING[currentPlan];
-  if (!currentTierPricing) {
-    return {
-      unusedCredit: 0,
-      remainingDays: 0,
-      isUpgrade: false,
-    };
-  }
-
-  const totalCycleDays = currentCycle === "YEARLY" ? 365 : 30;
-  const currentPlanPrice = currentCycle === "YEARLY" ? currentTierPricing.yearly : currentTierPricing.monthly;
-  const dailyRate = currentPlanPrice / totalCycleDays;
-  const rawCredit = remainingDays * dailyRate;
-
-  // Credit cannot exceed the original price paid for the active plan
-  const unusedCredit = Math.min(currentPlanPrice, Math.round(rawCredit));
-
-  return {
-    unusedCredit,
-    remainingDays,
-    isUpgrade: true,
-    previousPlan: currentPlan,
-    previousCycle: currentCycle,
-  };
-}
+const { PLAN_PRICING, calculateProrationCredit } = require("../utils/subscriptionPricing");
+const { calculateCouponDiscount, checkCouponPerUserLimit } = require("./couponController");
 
 /**
  * GET /api/subscription/status
@@ -185,11 +104,11 @@ const getSubscriptionStatus = asyncHandler(async (req, res) => {
 
 /**
  * POST /api/subscription/preview
- * Calculate price, unused credit from current plan, and net payable amount before opening checkout
+ * Calculate price, unused credit from current plan, coupon discount, and net payable amount before opening checkout
  */
 const previewSubscriptionOrder = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
-  const { plan, billingCycle } = req.body;
+  const { plan, billingCycle, couponCode } = req.body;
 
   const normalizedPlan = String(plan || "").toUpperCase();
   const normalizedCycle = String(billingCycle || "MONTHLY").toUpperCase();
@@ -216,7 +135,33 @@ const previewSubscriptionOrder = asyncHandler(async (req, res) => {
     calculateProrationCredit(user, normalizedPlan, normalizedCycle);
 
   const basePrice = normalizedCycle === "YEARLY" ? tier.yearly : tier.monthly;
-  const finalPrice = Math.max(1, basePrice - unusedCredit);
+  const preDiscountPayable = Math.max(0, basePrice - unusedCredit);
+
+  let discountAmount = 0;
+  let appliedCoupon = null;
+
+  if (couponCode) {
+    const normalizedCode = String(couponCode).trim().toUpperCase();
+    const coupon = await prisma.coupon.findUnique({
+      where: { code: normalizedCode },
+    });
+    if (!coupon) {
+      throw new AppError(`Coupon code "${normalizedCode}" is invalid.`, 400);
+    }
+    await checkCouponPerUserLimit(coupon, userId);
+    const calc = calculateCouponDiscount(coupon, preDiscountPayable);
+    discountAmount = calc.discount;
+    appliedCoupon = {
+      id: coupon.id,
+      code: coupon.code,
+      description: coupon.description,
+      discountType: coupon.discountType,
+      discountValue: coupon.discountValue,
+      expiresAt: coupon.expiresAt,
+    };
+  }
+
+  const finalPrice = Math.max(0, preDiscountPayable - discountAmount);
 
   return res.json({
     plan: normalizedPlan,
@@ -226,17 +171,19 @@ const previewSubscriptionOrder = asyncHandler(async (req, res) => {
     remainingDays,
     isUpgrade,
     previousPlan,
+    discountAmount,
+    coupon: appliedCoupon,
     finalPrice,
   });
 });
 
 /**
  * POST /api/subscription/create-order
- * Create a Razorpay order securely based on plan & billing cycle, applying unused credit
+ * Create a Razorpay order securely based on plan & billing cycle, applying unused credit and coupon discount
  */
 const createSubscriptionOrder = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
-  const { plan, billingCycle } = req.body;
+  const { plan, billingCycle, couponCode } = req.body;
 
   const normalizedPlan = String(plan || "").toUpperCase();
   const normalizedCycle = String(billingCycle || "MONTHLY").toUpperCase();
@@ -248,14 +195,6 @@ const createSubscriptionOrder = asyncHandler(async (req, res) => {
 
   if (!["MONTHLY", "YEARLY"].includes(normalizedCycle)) {
     throw new AppError(`Invalid billing cycle: ${billingCycle}`, 400);
-  }
-
-  const rzp = getRazorpayInstance();
-  if (!rzp) {
-    throw new AppError(
-      "Payment gateway is not configured yet. Please configure RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in server environment.",
-      503
-    );
   }
 
   const user = await prisma.user.findUnique({
@@ -276,10 +215,116 @@ const createSubscriptionOrder = asyncHandler(async (req, res) => {
     calculateProrationCredit(user, normalizedPlan, normalizedCycle);
 
   const basePrice = normalizedCycle === "YEARLY" ? tier.yearly : tier.monthly;
-  // Apply unused credit discount (Razorpay minimum is ₹1)
-  const finalAmountInRupees = Math.max(1, basePrice - unusedCredit);
-  const amountInPaise = finalAmountInRupees * 100;
+  const preDiscountPayable = Math.max(0, basePrice - unusedCredit);
 
+  let appliedCoupon = null;
+  let discountAmount = 0;
+
+  if (couponCode) {
+    const normalizedCode = String(couponCode).trim().toUpperCase();
+    appliedCoupon = await prisma.coupon.findUnique({
+      where: { code: normalizedCode },
+    });
+    if (!appliedCoupon) {
+      throw new AppError(`Coupon code "${normalizedCode}" is invalid.`, 400);
+    }
+    await checkCouponPerUserLimit(appliedCoupon, userId);
+    const calc = calculateCouponDiscount(appliedCoupon, preDiscountPayable);
+    discountAmount = calc.discount;
+  }
+
+  const finalAmountInRupees = Math.max(0, preDiscountPayable - discountAmount);
+
+  // If 100% discount, bypass payment gateway directly
+  if (finalAmountInRupees === 0) {
+    const now = new Date();
+    const isYearly = normalizedCycle === "YEARLY";
+    const daysToAdd = isYearly ? 365 : 30;
+    let newExpiresAt;
+    const isSamePlanRenewal =
+      user?.subscriptionPlan === normalizedPlan &&
+      user?.billingCycle === normalizedCycle;
+
+    if (isSamePlanRenewal && user?.planExpiresAt && new Date(user.planExpiresAt) > now) {
+      newExpiresAt = new Date(new Date(user.planExpiresAt).getTime() + daysToAdd * 24 * 60 * 60 * 1000);
+    } else {
+      newExpiresAt = new Date(now.getTime() + daysToAdd * 24 * 60 * 60 * 1000);
+    }
+
+    const freeOrderId = `free_${Date.now().toString().slice(-8)}`;
+    const invoiceNumber = `SB-${now.getFullYear()}-${Date.now().toString().slice(-6)}`;
+
+    const txTasks = [
+      prisma.subscriptionPayment.create({
+        data: {
+          userId,
+          orderId: freeOrderId,
+          paymentId: `COUPON_${appliedCoupon?.code || "FREE"}`,
+          amount: 0,
+          currency: "INR",
+          plan: normalizedPlan,
+          billingCycle: normalizedCycle,
+          status: "SUCCESS",
+          paymentMethod: "COUPON",
+          invoiceNumber,
+          couponId: appliedCoupon ? appliedCoupon.id : null,
+          couponCode: appliedCoupon ? appliedCoupon.code : null,
+          discountAmount,
+          paidAt: now,
+        },
+      }),
+      prisma.user.update({
+        where: { id: userId },
+        data: {
+          subscriptionPlan: normalizedPlan,
+          billingCycle: normalizedCycle,
+          subscriptionStatus: "ACTIVE",
+          planExpiresAt: newExpiresAt,
+        },
+      }),
+    ];
+
+    if (appliedCoupon) {
+      txTasks.push(
+        prisma.coupon.update({
+          where: { id: appliedCoupon.id },
+          data: { usedCount: { increment: 1 } },
+        })
+      );
+    }
+
+    await prisma.$transaction(txTasks);
+
+    logger.info("100% coupon applied, subscription activated immediately", {
+      feature: "subscription",
+      userId,
+      couponCode: appliedCoupon?.code,
+      plan: normalizedPlan,
+      expiresAt: newExpiresAt,
+    });
+
+    return res.json({
+      freeUpgrade: true,
+      message: "Subscription activated successfully!",
+      plan: normalizedPlan,
+      billingCycle: normalizedCycle,
+      expiresAt: newExpiresAt,
+      finalAmount: 0,
+      discountAmount,
+      couponCode: appliedCoupon?.code || null,
+    });
+  }
+
+  // Non-zero amount: proceed with Razorpay
+  const rzp = getRazorpayInstance();
+  if (!rzp) {
+    throw new AppError(
+      "Payment gateway is not configured yet. Please configure RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in server environment.",
+      503
+    );
+  }
+
+  const amountInPaise = finalAmountInRupees * 100;
   const receiptId = `sub_${Date.now().toString().slice(-8)}`;
 
   let order;
@@ -297,6 +342,8 @@ const createSubscriptionOrder = asyncHandler(async (req, res) => {
         remainingDays,
         isUpgrade: isUpgrade ? "true" : "false",
         previousPlan: previousPlan || "",
+        couponCode: appliedCoupon?.code || "",
+        discountAmount: String(discountAmount),
         firmName: user?.firmName || "",
         email: user?.email || "",
       },
@@ -327,7 +374,7 @@ const createSubscriptionOrder = asyncHandler(async (req, res) => {
     );
   }
 
-  // Create pending subscription payment record
+  // Create pending subscription payment record with coupon details
   await prisma.subscriptionPayment.create({
     data: {
       userId,
@@ -337,6 +384,9 @@ const createSubscriptionOrder = asyncHandler(async (req, res) => {
       plan: normalizedPlan,
       billingCycle: normalizedCycle,
       status: "PENDING",
+      couponId: appliedCoupon ? appliedCoupon.id : null,
+      couponCode: appliedCoupon ? appliedCoupon.code : null,
+      discountAmount: discountAmount || 0,
     },
   });
 
@@ -345,6 +395,8 @@ const createSubscriptionOrder = asyncHandler(async (req, res) => {
     amount: amountInPaise,
     basePrice,
     unusedCredit,
+    discountAmount,
+    couponCode: appliedCoupon?.code || null,
     remainingDays,
     isUpgrade,
     finalAmount: finalAmountInRupees,
@@ -415,7 +467,7 @@ async function processSuccessfulSubscriptionPayment({ paymentRecord, razorpayPay
 
   const invoiceNumber = `SB-${now.getFullYear()}-${Date.now().toString().slice(-6)}`;
 
-  const [updatedPayment, updatedUser] = await prisma.$transaction([
+  const txTasks = [
     prisma.subscriptionPayment.update({
       where: { id: paymentRecord.id },
       data: {
@@ -444,7 +496,20 @@ async function processSuccessfulSubscriptionPayment({ paymentRecord, razorpayPay
         planExpiresAt: true,
       },
     }),
-  ]);
+  ];
+
+  if (paymentRecord.couponId) {
+    txTasks.push(
+      prisma.coupon.update({
+        where: { id: paymentRecord.couponId },
+        data: {
+          usedCount: { increment: 1 },
+        },
+      })
+    );
+  }
+
+  const [updatedPayment, updatedUser] = await prisma.$transaction(txTasks);
 
   logger.info("Subscription payment activated successfully", {
     feature: "subscription",
@@ -834,14 +899,11 @@ const getInAppReminders = asyncHandler(async (req, res) => {
  * Testing utility: switch subscription plan & validity to test all tiers
  */
 const testSwitchPlan = asyncHandler(async (req, res) => {
-  // Allow test switching only when explicitly enabled via env (e.g. in staging/dev)
-  const isSimulatorEnabled =
-    process.env.ENABLE_SUBSCRIPTION_SIMULATOR === "true" ||
-    process.env.NODE_ENV === "development" ||
-    process.env.NODE_ENV === "staging";
+  // Allow test switching only when explicitly enabled via env
+  const isSimulatorEnabled = process.env.ENABLE_SUBSCRIPTION_SIMULATOR === "true";
 
   if (!isSimulatorEnabled) {
-    throw new AppError("Subscription plan simulator is disabled in this environment", 403);
+    throw new AppError("Subscription plan simulator is disabled", 403);
   }
 
   const userId = req.user.userId;

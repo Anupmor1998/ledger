@@ -59,12 +59,17 @@ model SubscriptionPayment {
   status        String    @default("PENDING")
   paymentMethod String?
   invoiceNumber String?
+  couponId      String?
+  couponCode    String?
+  discountAmount Float?
   paidAt        DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  coupon        Coupon?   @relation(fields: [couponId], references: [id], onDelete: SetNull)
 
   @@index([userId])
+  @@index([couponId])
 }
 
 model PasswordResetToken {
@@ -525,4 +530,34 @@ model ManufacturerQuality {
   @@index([userId])
   @@index([manufacturerId])
   @@index([qualityId])
+}
+
+enum CouponDiscountType {
+  PERCENTAGE
+  FLAT
+}
+
+model Coupon {
+  id             String             @id @default(uuid())
+  code           String             @unique
+  description    String?
+  discountType   CouponDiscountType @default(PERCENTAGE)
+  discountValue  Float
+  minOrderAmount Float              @default(0)
+  maxDiscount    Float?
+  maxUses        Int?
+  maxUsesPerUser Int                @default(1)
+  usedCount      Int                @default(0)
+  expiresAt      DateTime?
+  isActive       Boolean            @default(true)
+  isPublic       Boolean            @default(false)
+  createdById    String?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  payments       SubscriptionPayment[]
+
+  @@index([code])
+  @@index([isActive])
+  @@index([isPublic])
+  @@index([expiresAt])
 }

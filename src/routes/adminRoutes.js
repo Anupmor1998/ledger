@@ -18,6 +18,13 @@ const {
   deleteTicket,
   streamAdminSupportLive,
 } = require("../controllers/supportTicketController");
+const {
+  listCoupons,
+  createCoupon,
+  generateCouponBatch,
+  updateCoupon,
+  deleteCoupon,
+} = require("../controllers/couponController");
 
 const router = express.Router();
 
@@ -29,6 +36,13 @@ router.get("/support/stats", getSupportStats);
 router.get("/support/tickets", listAllTickets);
 router.patch("/support/tickets/:id", updateTicketStatus);
 router.delete("/support/tickets/:id", deleteTicket);
+
+// Coupon management routes
+router.get("/coupons", listCoupons);
+router.post("/coupons", createCoupon);
+router.post("/coupons/generate-batch", generateCouponBatch);
+router.patch("/coupons/:id", updateCoupon);
+router.delete("/coupons/:id", deleteCoupon);
 
 router.patch("/users/:id/subscription", adminUpdateUserSubscription);
 router.patch("/users/:id/free-access", toggleUserFreeAccess);
