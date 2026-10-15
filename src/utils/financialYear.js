@@ -36,7 +36,12 @@ function getFinancialYearLabel(startYear) {
   return `${year}-${nextShortYear}`;
 }
 
+const APP_INCEPTION_FY_START_YEAR = 2025; // FY 2025-26 (Feb 2026 launch)
+const APP_INCEPTION_CALENDAR_YEAR = 2025;
+
 module.exports = {
+  APP_INCEPTION_FY_START_YEAR,
+  APP_INCEPTION_CALENDAR_YEAR,
   getFinancialYearStartYear,
   getFinancialYearLabel,
 };
