@@ -1102,7 +1102,7 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
             quantityUnit: sourceOrder.quantityUnit,
             lotMeters: sourceOrder.lotMeters,
             meter: sourceOrder.meter,
-            commissionAmount: sourceOrder.commissionAmount,
+            commissionAmount: balanceAmount,
             remarks: sourceOrder.remarks,
             customerRemark: sourceOrder.customerRemark,
             manufacturerRemark: sourceOrder.manufacturerRemark,
@@ -1168,6 +1168,14 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
         },
       });
 
+      // Mark source pending payment as TRANSFERRED
+      await tx.pendingPayment.update({
+        where: { id: payment.id },
+        data: {
+          status: PENDING_PAYMENT_STATUS.TRANSFERRED,
+        },
+      });
+
       nextPendingPaymentSerialNo += 1;
     }
 
@@ -1218,6 +1226,7 @@ const undoYearTransferBatch = asyncHandler(async (req, res) => {
           select: {
             id: true,
             orderId: true,
+            carriedForwardFromPendingPaymentId: true,
             createdAt: true,
             updatedAt: true,
             paymentAllocations: {
@@ -1249,6 +1258,26 @@ const undoYearTransferBatch = asyncHandler(async (req, res) => {
 
     const carriedPaymentIds = batch.carriedPayments.map((payment) => payment.id);
     const carriedOrderIds = batch.carriedOrders.map((order) => order.id);
+
+    // Revert source pending payments back to active status
+    const sourcePendingPaymentIds = batch.carriedPayments
+      .map((payment) => payment.carriedForwardFromPendingPaymentId)
+      .filter(Boolean);
+
+    if (sourcePendingPaymentIds.length > 0) {
+      const sourcePayments = await tx.pendingPayment.findMany({
+        where: { id: { in: sourcePendingPaymentIds }, userId },
+      });
+      for (const sp of sourcePayments) {
+        const revertStatus = Number(sp.amountReceived || 0) > 0
+          ? PENDING_PAYMENT_STATUS.PARTIAL
+          : PENDING_PAYMENT_STATUS.PENDING;
+        await tx.pendingPayment.update({
+          where: { id: sp.id },
+          data: { status: revertStatus },
+        });
+      }
+    }
 
     if (carriedPaymentIds.length > 0) {
       await tx.pendingPayment.deleteMany({

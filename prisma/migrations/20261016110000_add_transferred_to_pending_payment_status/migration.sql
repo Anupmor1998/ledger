@@ -1,0 +1,3 @@
+-- AlterEnum
+ALTER TYPE "PendingPaymentStatus" ADD VALUE IF NOT EXISTS 'TRANSFERRED';
+

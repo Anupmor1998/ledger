@@ -47,6 +47,9 @@ function normalizeOrder(order) {
     progressManufacturerCommissionAmount,
     originalOrderNo: order.originalOrderNo ?? order.carriedForwardFromOrder?.orderNo ?? null,
     originalOrderDate: order.originalOrderDate ?? order.carriedForwardFromOrder?.orderDate ?? null,
+    displayOrderNo: Boolean(order.isCarryForward || order.carriedForwardFromOrderId)
+      ? `${order.originalOrderNo ?? order.carriedForwardFromOrder?.orderNo ?? order.orderNo}#`
+      : (order.originalOrderNo ?? order.carriedForwardFromOrder?.orderNo ?? order.orderNo),
     whatsappMessages: buildOrderWhatsAppMessages(order),
     whatsappLinks: buildOrderWhatsAppLinks(order),
   };
@@ -921,10 +924,11 @@ const ORDER_NUMERIC_SEARCH_FIELDS = [
 ];
 
 function parseNumericSearchToken(token) {
-  const normalized = String(token || "").trim();
+  let normalized = String(token || "").trim();
   if (!normalized) {
     return null;
   }
+  normalized = normalized.replace(/^#+|#+$/g, "").trim();
 
   if (!/^\d+(?:\.\d+)?$/.test(normalized)) {
     return null;
@@ -984,7 +988,14 @@ function buildOrderSearchWhere(searchField, search) {
 
   switch (selectedField) {
     case "orderNo":
-      return numericValue === null ? { id: "__no_order_search_match__" } : { orderNo: numericValue };
+      return numericValue === null
+        ? { id: "__no_order_search_match__" }
+        : {
+            OR: [
+              { orderNo: numericValue },
+              { originalOrderNo: numericValue },
+            ],
+          };
     case "orderDate": {
       const date = new Date(normalizedSearch);
       if (Number.isNaN(date.getTime())) {
@@ -1269,6 +1280,21 @@ const listOrders = asyncHandler(async (req, res) => {
   if (useInMemoryNumericSubstringSearch) {
     const allOrders = await prisma.order.findMany(queryOptions);
     const filteredOrders = allOrders.filter((order) => {
+      if (searchField === "orderNo") {
+        const cleanSearch = normalizedSearch.replace(/^#+|#+$/g, "");
+        const rawNo = String(order.orderNo ?? "");
+        const origNo = String(order.originalOrderNo ?? "");
+        const displayNo = String(order.originalOrderNo || order.orderNo || "");
+        const displayWithHash = (order.isCarryForward || order.carriedForwardFromOrderId)
+          ? `${displayNo}#`
+          : displayNo;
+        return (
+          displayWithHash.includes(normalizedSearch) ||
+          displayNo.includes(cleanSearch) ||
+          rawNo.includes(cleanSearch) ||
+          origNo.includes(cleanSearch)
+        );
+      }
       const fieldValue = order[searchField];
       if (fieldValue === null || fieldValue === undefined) {
         return false;
