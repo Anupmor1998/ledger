@@ -189,6 +189,8 @@ const getDashboardSummary = require("../utils/asyncHandler")(async (req, res) =>
   let cancelledCommissionAmount = 0;
   let totalLotInFinancialYear = 0;
   const mfrCommissionEarnedMap = new Map();
+  let totalCustomerCommission = 0;
+  let totalManufacturerCommission = 0;
 
   fyOrders.forEach((order) => {
     const orderDate = new Date(order.orderDate);
@@ -196,6 +198,7 @@ const getDashboardSummary = require("../utils/asyncHandler")(async (req, res) =>
     const monthlyKey = formatMonthKey(orderDate);
     const status = String(order.status || "").toUpperCase();
     const commissionAmount = Number(order.commissionAmount || 0);
+    const manufacturerCommissionAmount = Number(order.manufacturerCommissionAmount || 0);
     const lotValue = computeLotValue(order);
 
     if (dailyCounts.has(dailyKey)) {
@@ -206,11 +209,16 @@ const getDashboardSummary = require("../utils/asyncHandler")(async (req, res) =>
     }
     totalLotInFinancialYear += lotValue;
 
+    if (status !== "CANCELLED") {
+      totalCustomerCommission += commissionAmount;
+      totalManufacturerCommission += manufacturerCommissionAmount;
+    }
+
     if (order.manufacturerId && status !== "CANCELLED") {
       const current = mfrCommissionEarnedMap.get(order.manufacturerId) || 0;
       mfrCommissionEarnedMap.set(
         order.manufacturerId,
-        current + Number(order.manufacturerCommissionAmount || 0)
+        current + manufacturerCommissionAmount
       );
     }
 
@@ -329,7 +337,9 @@ const getDashboardSummary = require("../utils/asyncHandler")(async (req, res) =>
     manufacturerPendingCommissionAmount: Math.round(totalManufacturerPendingCommission),
     completedCommissionAmount: Math.round(completedCommissionAmount),
     cancelledCommissionAmount: Math.round(cancelledCommissionAmount),
-    totalCommissionAmount: Math.round(totalCommissionAmount),
+    totalCommissionAmount: Math.round(totalCustomerCommission + totalManufacturerCommission),
+    totalCustomerCommission: Math.round(totalCustomerCommission),
+    totalManufacturerCommission: Math.round(totalManufacturerCommission),
     dailyLots: dailyBuckets,
     monthlyLots: monthlyBuckets,
     yearlyOrders,
