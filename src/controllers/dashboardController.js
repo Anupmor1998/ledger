@@ -176,6 +176,8 @@ const getDashboardSummary = require("../utils/asyncHandler")(async (req, res) =>
       quantity: true,
       quantityUnit: true,
       lotMeters: true,
+      manufacturerId: true,
+      manufacturerCommissionAmount: true,
     },
   });
 
@@ -186,6 +188,7 @@ const getDashboardSummary = require("../utils/asyncHandler")(async (req, res) =>
   let completedCommissionAmount = 0;
   let cancelledCommissionAmount = 0;
   let totalLotInFinancialYear = 0;
+  const mfrCommissionEarnedMap = new Map();
 
   fyOrders.forEach((order) => {
     const orderDate = new Date(order.orderDate);
@@ -203,6 +206,14 @@ const getDashboardSummary = require("../utils/asyncHandler")(async (req, res) =>
     }
     totalLotInFinancialYear += lotValue;
 
+    if (order.manufacturerId && status !== "CANCELLED") {
+      const current = mfrCommissionEarnedMap.get(order.manufacturerId) || 0;
+      mfrCommissionEarnedMap.set(
+        order.manufacturerId,
+        current + Number(order.manufacturerCommissionAmount || 0)
+      );
+    }
+
     if (status === "PENDING") {
       pendingOrderCount += 1;
       pendingCommissionAmount += commissionAmount;
@@ -214,6 +225,34 @@ const getDashboardSummary = require("../utils/asyncHandler")(async (req, res) =>
       cancelledCommissionAmount += commissionAmount;
     }
   });
+
+  let totalManufacturerPendingCommission = 0;
+  if (mfrCommissionEarnedMap.size > 0) {
+    const mfrPaymentEntries = await prisma.paymentEntry.findMany({
+      where: {
+        userId: req.user.userId,
+        fyStartYear: selectedFinancialYearStart,
+        partyType: "MANUFACTURER",
+        manufacturerId: { in: Array.from(mfrCommissionEarnedMap.keys()) },
+      },
+      select: {
+        manufacturerId: true,
+        amount: true,
+      },
+    });
+
+    const mfrPaymentMap = new Map();
+    mfrPaymentEntries.forEach((entry) => {
+      const current = mfrPaymentMap.get(entry.manufacturerId) || 0;
+      mfrPaymentMap.set(entry.manufacturerId, current + Number(entry.amount || 0));
+    });
+
+    mfrCommissionEarnedMap.forEach((earned, mfrId) => {
+      const paid = mfrPaymentMap.get(mfrId) || 0;
+      const balance = Math.max(0, earned - paid);
+      totalManufacturerPendingCommission += balance;
+    });
+  }
 
   const pendingCommissionSummary = await prisma.pendingPayment.aggregate({
     where: {
@@ -228,7 +267,9 @@ const getDashboardSummary = require("../utils/asyncHandler")(async (req, res) =>
     },
   });
 
-  const openPendingCommissionAmount = Number(pendingCommissionSummary._sum.balanceAmount || 0);
+  const openCustomerPendingCommissionAmount = Number(pendingCommissionSummary._sum.balanceAmount || 0);
+  const openPendingCommissionAmount =
+    openCustomerPendingCommissionAmount + totalManufacturerPendingCommission;
   const totalCommissionAmount =
     openPendingCommissionAmount + completedCommissionAmount + cancelledCommissionAmount;
 
@@ -284,6 +325,8 @@ const getDashboardSummary = require("../utils/asyncHandler")(async (req, res) =>
     completedOrderCount,
     cancelledOrderCount,
     pendingCommissionAmount: Math.round(openPendingCommissionAmount),
+    customerPendingCommissionAmount: Math.round(openCustomerPendingCommissionAmount),
+    manufacturerPendingCommissionAmount: Math.round(totalManufacturerPendingCommission),
     completedCommissionAmount: Math.round(completedCommissionAmount),
     cancelledCommissionAmount: Math.round(cancelledCommissionAmount),
     totalCommissionAmount: Math.round(totalCommissionAmount),

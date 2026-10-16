@@ -84,7 +84,11 @@ function buildTopParties(orders, partyKey, limit = 10) {
     const entry = partyMap.get(partyId);
     entry.totalLot += computeLotValue(order);
     entry.totalOrders += 1;
-    entry.totalCommission += Math.round(Number(order.commissionAmount || 0));
+    const comm =
+      partyKey === "manufacturer"
+        ? Number(order.manufacturerCommissionAmount ?? 0)
+        : Number(order.commissionAmount ?? 0);
+    entry.totalCommission += Math.round(comm);
   });
 
   return [...partyMap.values()]
@@ -313,6 +317,7 @@ const getAnalytics = asyncHandler(async (req, res) => {
     orderDate: true,
     status: true,
     commissionAmount: true,
+    manufacturerCommissionAmount: true,
     lot: true,
     quantity: true,
     quantityUnit: true,
