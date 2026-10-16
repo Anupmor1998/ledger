@@ -198,6 +198,8 @@ function buildCommissionTrend(orders, fyMonths, anchorDate) {
       key: m.key,
       label: m.label,
       commission: 0,
+      customerCommission: 0,
+      manufacturerCommission: 0,
       orders: 0,
       lot: 0,
     });
@@ -206,12 +208,16 @@ function buildCommissionTrend(orders, fyMonths, anchorDate) {
   orders.forEach((order) => {
     const orderDate = new Date(order.orderDate);
     const key = formatMonthKey(orderDate);
-    const commission = Math.round(Number(order.commissionAmount || 0));
+    const customerCommission = Math.round(Number(order.commissionAmount || 0));
+    const manufacturerCommission = Math.round(Number(order.manufacturerCommissionAmount || 0));
+    const commission = customerCommission + manufacturerCommission;
     const lot = computeLotValue(order);
 
     if (bucketMap.has(key)) {
       const bucket = bucketMap.get(key);
       bucket.commission += commission;
+      bucket.customerCommission += customerCommission;
+      bucket.manufacturerCommission += manufacturerCommission;
       bucket.orders += 1;
       bucket.lot += lot;
     }
@@ -246,10 +252,15 @@ function buildKeyMetrics(orders) {
         ) / 10
       : 0;
 
-  const totalCommission = orders.reduce(
+  const customerTotalCommission = nonCancelledOrders.reduce(
     (sum, o) => sum + Math.round(Number(o.commissionAmount || 0)),
     0,
   );
+  const manufacturerTotalCommission = nonCancelledOrders.reduce(
+    (sum, o) => sum + Math.round(Number(o.manufacturerCommissionAmount || 0)),
+    0,
+  );
+  const totalCommission = customerTotalCommission + manufacturerTotalCommission;
   const avgOrderValue =
     totalOrders > 0 ? Math.round(totalCommission / totalOrders) : 0;
 
@@ -288,6 +299,9 @@ function buildKeyMetrics(orders) {
   return {
     completionRate,
     avgOrderValue,
+    totalCommission,
+    customerTotalCommission,
+    manufacturerTotalCommission,
     totalCustomersServed,
     totalManufacturersUsed,
     repeatCustomerRate,
