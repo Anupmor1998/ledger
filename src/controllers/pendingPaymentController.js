@@ -157,9 +157,10 @@ const listPendingPayments = asyncHandler(async (req, res) => {
       PENDING_PAYMENT_STATUS.PARTIAL,
       PENDING_PAYMENT_STATUS.PAID,
       PENDING_PAYMENT_STATUS.SETTLED,
+      PENDING_PAYMENT_STATUS.TRANSFERRED,
     ].includes(statusFilter)
   ) {
-    throw new AppError("status must be one of: PENDING, PARTIAL, PAID, SETTLED", 400);
+    throw new AppError("status must be one of: PENDING, PARTIAL, PAID, SETTLED, TRANSFERRED", 400);
   }
   const dueFrom = req.query.dueFrom ? new Date(String(req.query.dueFrom)) : null;
   const dueTo = req.query.dueTo ? new Date(String(req.query.dueTo)) : null;

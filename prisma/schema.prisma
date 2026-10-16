@@ -303,6 +303,7 @@ enum PendingPaymentStatus {
   PARTIAL
   PAID
   SETTLED
+  TRANSFERRED
 }
 
 model PaymentAllocation {

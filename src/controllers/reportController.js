@@ -60,6 +60,9 @@ function resolveOrderPaymentStatus(order) {
   if (ppStatus === "PAID" || ppStatus === "SETTLED") {
     return "PAID";
   }
+  if (ppStatus === "TRANSFERRED") {
+    return "TRANSFERRED";
+  }
 
   const poas = Array.isArray(order?.paymentOrderAllocations)
     ? order.paymentOrderAllocations
@@ -136,6 +139,11 @@ function extractPartialPayments(
     const pas = Array.isArray(order.pendingPayment?.paymentAllocations)
       ? order.pendingPayment.paymentAllocations
       : [];
+    const baseOrderNo = order.originalOrderNo || order.orderNo;
+    const isCarryForward = Boolean(
+      order.isCarryForward || order.carriedForwardFromOrderId,
+    );
+    const displayOrderNo = isCarryForward ? `${baseOrderNo}#` : baseOrderNo;
 
     if (poas.length > 0) {
       poas.forEach((alloc) => {
@@ -143,7 +151,7 @@ function extractPartialPayments(
         if (amount > 0) {
           const entry = alloc.paymentEntry;
           partialPayments.push({
-            orderNo: order.orderNo,
+            orderNo: displayOrderNo,
             serialNo: entry?.serialNo,
             amount,
             date: entry?.date || alloc.createdAt,
@@ -161,7 +169,7 @@ function extractPartialPayments(
         if (amount > 0) {
           const receipt = alloc.paymentReceipt;
           partialPayments.push({
-            orderNo: order.orderNo,
+            orderNo: displayOrderNo,
             serialNo: receipt?.serialNo,
             amount,
             date:
@@ -324,10 +332,13 @@ function normalizeStatusFilter(value) {
   if (!normalized || normalized === REPORT_STATUS.ALL) {
     return null;
   }
-  if (!Object.values(ORDER_STATUS).includes(normalized)) {
+  if (
+    normalized === ORDER_STATUS.CANCELLED ||
+    normalized === ORDER_STATUS.TRANSFERRED
+  ) {
     throw new AppError("status must be one of: all, pending, completed", 400);
   }
-  if (normalized === ORDER_STATUS.CANCELLED) {
+  if (!Object.values(ORDER_STATUS).includes(normalized)) {
     throw new AppError("status must be one of: all, pending, completed", 400);
   }
   return normalized;
@@ -593,7 +604,11 @@ function orderToReportRow(
 
   const meterValue = isLotBasis ? "" : computeMeterValue(order).toFixed(2);
 
-  const displayOrderNo = order.originalOrderNo || order.orderNo;
+  const baseOrderNo = order.originalOrderNo || order.orderNo;
+  const isCarryForward = Boolean(
+    order.isCarryForward || order.carriedForwardFromOrderId,
+  );
+  const displayOrderNo = isCarryForward ? `${baseOrderNo}#` : baseOrderNo;
   const transferDateStr = formatCellDate(order.orderDate);
   const originalDateStr = order.originalOrderDate
     ? formatCellDate(order.originalOrderDate)
@@ -1130,6 +1145,10 @@ async function exportReportByType(req, res, reportType, format = "xlsx") {
   const where = await getOrderFilters(req.query, req.user.userId);
   if (status) {
     where.status = status;
+  } else {
+    where.status = {
+      in: [ORDER_STATUS.PENDING, ORDER_STATUS.COMPLETED],
+    };
   }
 
   const isManufacturerReport = reportType === "manufacturer";

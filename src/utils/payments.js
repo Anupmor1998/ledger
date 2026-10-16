@@ -14,6 +14,7 @@ const PENDING_PAYMENT_STATUS = {
   PARTIAL: "PARTIAL",
   PAID: "PAID",
   SETTLED: "SETTLED",
+  TRANSFERRED: "TRANSFERRED",
 };
 
 function round2(value) {

@@ -130,7 +130,11 @@ function buildOrderDetailLines(order, paymentDueDays, recipient, mergedRemark) {
 function buildManufacturerMessage(order) {
   const paymentDueDays = resolvePaymentDueDays(order, { addExtraDays: 5 });
   const mergedRemark = buildMergedRemark(order, "MANUFACTURER");
-  const displayOrderNo = order.originalOrderNo || order.orderNo;
+  const baseOrderNo = order.originalOrderNo || order.orderNo;
+  const isCarryForward = Boolean(
+    order.isCarryForward || order.carriedForwardFromOrderId,
+  );
+  const displayOrderNo = isCarryForward ? `${baseOrderNo}#` : baseOrderNo;
   const orderDateStr = order.originalOrderDate
     ? `${formatDate(order.orderDate)} (Orig: ${formatDate(order.originalOrderDate)})`
     : formatDate(order.orderDate);
@@ -162,7 +166,11 @@ function buildManufacturerMessage(order) {
 function buildCustomerMessage(order) {
   const paymentDueDays = resolvePaymentDueDays(order);
   const mergedRemark = buildMergedRemark(order, "CUSTOMER");
-  const displayOrderNo = order.originalOrderNo || order.orderNo;
+  const baseOrderNo = order.originalOrderNo || order.orderNo;
+  const isCarryForward = Boolean(
+    order.isCarryForward || order.carriedForwardFromOrderId,
+  );
+  const displayOrderNo = isCarryForward ? `${baseOrderNo}#` : baseOrderNo;
   const orderDateStr = order.originalOrderDate
     ? `${formatDate(order.orderDate)} (Orig: ${formatDate(order.originalOrderDate)})`
     : formatDate(order.orderDate);
