@@ -17,6 +17,7 @@
     "audit:commissions": "node scripts/audit-commissions.js",
     "fix:commission-rounding": "node scripts/fix-commission-rounding.js",
     "repair:commission-live": "node scripts/repair-commission-live.js",
+    "repair:manufacturer-commission": "node scripts/repair-manufacturer-commissions.js",
     "repair:meter-lot-fields": "node scripts/fill-meter-lot-fields.js",
     "admin:create": "node scripts/create-admin-user.js"
   },

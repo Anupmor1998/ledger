@@ -7,6 +7,7 @@ const {
   listManufacturerDuplicateGroups,
   listManufacturers,
   getManufacturerById,
+  previewManufacturerCommissionRecalculation,
   updateManufacturer,
   deleteManufacturer,
   previewMergeManufacturer,
@@ -24,6 +25,7 @@ router.post("/", requireActiveSubscription, createManufacturer);
 router.get("/duplicate-groups", listManufacturerDuplicateGroups);
 router.get("/", listManufacturers);
 router.get("/:id", getManufacturerById);
+router.get("/:id/commission-recalculation-preview", previewManufacturerCommissionRecalculation);
 router.get("/:id/merge-preview", previewMergeManufacturer);
 router.post("/:id/merge", mergeManufacturer);
 router.put("/:id", updateManufacturer);

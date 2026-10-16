@@ -8,6 +8,7 @@ const {
   parsePagination,
   parseSort,
 } = require("../utils/listQuery");
+const { getFinancialYearStartYear } = require("../utils/financialYear");
 const {
   buildDuplicateGroups,
   buildDuplicateStats,
@@ -108,6 +109,165 @@ function buildManufacturerCommissionData(body, existing = null) {
     commissionBase,
     commissionPercent: 0,
     commissionLotRate,
+  };
+}
+
+const QUANTITY_UNITS = {
+  TAKKA: "TAKKA",
+  LOT: "LOT",
+  METER: "METER",
+};
+const TAKKA_PER_LOT = 12;
+const GST_RATE = 0.05;
+
+function roundCurrency(value) {
+  return Math.round(Number(value || 0));
+}
+
+function toLotQuantity({ quantity, quantityUnit, lotMeters }) {
+  if (quantityUnit === QUANTITY_UNITS.LOT) {
+    return quantity;
+  }
+  if (quantityUnit === QUANTITY_UNITS.TAKKA) {
+    return quantity / TAKKA_PER_LOT;
+  }
+  const effectiveLotMeters = Number(lotMeters || 0) > 0 ? Number(lotMeters) : 1450;
+  return quantity / effectiveLotMeters;
+}
+
+function toMeterFromQuantity({ quantity, quantityUnit, lotMeters }) {
+  if (quantityUnit === QUANTITY_UNITS.METER) {
+    return quantity;
+  }
+  const effectiveLotMeters = Number(lotMeters || 0) > 0 ? Number(lotMeters) : 1450;
+  if (quantityUnit === QUANTITY_UNITS.LOT) {
+    return quantity * effectiveLotMeters;
+  }
+  if (quantityUnit === QUANTITY_UNITS.TAKKA) {
+    return (quantity / TAKKA_PER_LOT) * effectiveLotMeters;
+  }
+  return quantity;
+}
+
+function computeManufacturerCommissionAmountForOrder(order, commissionConfig) {
+  const quantity = Number(order?.quantity || 0);
+  const rate = Number(order?.rate || 0);
+  const quantityUnit = order?.quantityUnit;
+  const lotMeters = order?.lotMeters ? Number(order.lotMeters) : null;
+
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    return 0;
+  }
+
+  const commissionBase = String(
+    commissionConfig?.commissionBase || COMMISSION_BASE.LOT
+  ).toUpperCase();
+  const commissionPercent = Number(commissionConfig?.commissionPercent || 0);
+  const commissionLotRate = Number(commissionConfig?.commissionLotRate || 0);
+
+  if (commissionBase === COMMISSION_BASE.LOT) {
+    if (commissionLotRate <= 0) {
+      return 0;
+    }
+    const lotQuantity = toLotQuantity({
+      quantity,
+      quantityUnit,
+      lotMeters,
+    });
+    return roundCurrency(lotQuantity * commissionLotRate);
+  }
+
+  if (commissionPercent <= 0) {
+    return 0;
+  }
+
+  const meter = toMeterFromQuantity({
+    quantity,
+    quantityUnit,
+    lotMeters,
+  });
+  const baseAmount = meter * rate;
+  const gstAmount = baseAmount * GST_RATE;
+  return roundCurrency((baseAmount + gstAmount) * (commissionPercent / 100));
+}
+
+function hasCommissionChanged(existing, next) {
+  return (
+    String(existing?.commissionBase || "").toUpperCase() !==
+      String(next?.commissionBase || "").toUpperCase() ||
+    Number(existing?.commissionPercent || 0) !==
+      Number(next?.commissionPercent || 0) ||
+    Number(existing?.commissionLotRate || 0) !==
+      Number(next?.commissionLotRate || 0)
+  );
+}
+
+async function getManufacturerCommissionRecalculationScope(
+  tx,
+  userId,
+  manufacturerId,
+  selectedFinancialYearStart
+) {
+  const orders = await tx.order.findMany({
+    where: {
+      userId,
+      manufacturerId,
+      fyStartYear: selectedFinancialYearStart,
+      status: { not: "CANCELLED" },
+    },
+    select: {
+      id: true,
+      orderNo: true,
+      status: true,
+      quantity: true,
+      rate: true,
+      quantityUnit: true,
+      lotMeters: true,
+      manufacturerCommissionAmount: true,
+    },
+    orderBy: { orderNo: "asc" },
+  });
+
+  return {
+    orders,
+    selectedFinancialYearStart,
+    totalOrdersInSelectedFinancialYear: orders.length,
+    updatableOrders: orders.length,
+  };
+}
+
+async function recalculateManufacturerOrdersForSelectedFinancialYear(
+  tx,
+  userId,
+  manufacturerId,
+  selectedFinancialYearStart,
+  commissionData
+) {
+  const scope = await getManufacturerCommissionRecalculationScope(
+    tx,
+    userId,
+    manufacturerId,
+    selectedFinancialYearStart
+  );
+
+  let updatedOrders = 0;
+
+  for (const order of scope.orders) {
+    const manufacturerCommissionAmount = computeManufacturerCommissionAmountForOrder(
+      order,
+      commissionData
+    );
+
+    await tx.order.update({
+      where: { id: order.id },
+      data: { manufacturerCommissionAmount },
+    });
+    updatedOrders += 1;
+  }
+
+  return {
+    selectedFinancialYearStart,
+    updatedOrders,
   };
 }
 
@@ -317,6 +477,43 @@ const getManufacturerById = asyncHandler(async (req, res) => {
   return res.json(manufacturer);
 });
 
+const previewManufacturerCommissionRecalculation = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+  const { id } = req.params;
+
+  const existing = await prisma.manufacturer.findFirst({
+    where: { id, userId },
+    select: { id: true },
+  });
+  if (!existing) {
+    throw new AppError("manufacturer not found", 404);
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { selectedFinancialYearStart: true },
+  });
+  if (!user) {
+    throw new AppError("user not found", 404);
+  }
+
+  const selectedFinancialYearStart =
+    user.selectedFinancialYearStart ?? getFinancialYearStartYear();
+
+  const preview = await getManufacturerCommissionRecalculationScope(
+    prisma,
+    userId,
+    id,
+    selectedFinancialYearStart
+  );
+
+  return res.json({
+    selectedFinancialYearStart: preview.selectedFinancialYearStart,
+    totalOrdersInSelectedFinancialYear: preview.totalOrdersInSelectedFinancialYear,
+    updatableOrders: preview.updatableOrders,
+  });
+});
+
 const updateManufacturer = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
   const { id } = req.params;
@@ -340,12 +537,48 @@ const updateManufacturer = asyncHandler(async (req, res) => {
     throw new AppError("manufacturer not found", 404);
   }
   const commissionData = buildManufacturerCommissionData(req.body, existing);
-  const manufacturer = await prisma.manufacturer.update({
-    where: { id },
-    data: { firmName, name, address, email, phone, ...commissionData },
+  const applyCommissionToSelectedFinancialYear =
+    req.body?.applyCommissionToSelectedFinancialYear === true;
+  const commissionChanged = hasCommissionChanged(existing, commissionData);
+
+  const result = await prisma.$transaction(async (tx) => {
+    const manufacturer = await tx.manufacturer.update({
+      where: { id },
+      data: { firmName, name, address, email, phone, ...commissionData },
+    });
+
+    let recalculation = null;
+    if (applyCommissionToSelectedFinancialYear && commissionChanged) {
+      const user = await tx.user.findUnique({
+        where: { id: userId },
+        select: { selectedFinancialYearStart: true },
+      });
+      if (!user) {
+        throw new AppError("user not found", 404);
+      }
+
+      const selectedFinancialYearStart =
+        user.selectedFinancialYearStart ?? getFinancialYearStartYear();
+
+      recalculation = await recalculateManufacturerOrdersForSelectedFinancialYear(
+        tx,
+        userId,
+        id,
+        selectedFinancialYearStart,
+        commissionData
+      );
+    }
+
+    return {
+      manufacturer,
+      recalculation,
+    };
   });
 
-  return res.json(manufacturer);
+  return res.json({
+    ...result.manufacturer,
+    recalculation: result.recalculation,
+  });
 });
 
 const deleteManufacturer = asyncHandler(async (req, res) => {
@@ -621,6 +854,7 @@ module.exports = {
   listManufacturerDuplicateGroups,
   listManufacturers,
   getManufacturerById,
+  previewManufacturerCommissionRecalculation,
   updateManufacturer,
   deleteManufacturer,
   previewMergeManufacturer,
