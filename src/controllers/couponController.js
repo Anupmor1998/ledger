@@ -213,6 +213,11 @@ const getAvailableCoupons = asyncHandler(async (req, res) => {
         minOrderAmount: c.minOrderAmount,
         maxDiscount: c.maxDiscount,
         expiresAt: c.expiresAt,
+        showBanner: c.showBanner,
+        bannerTheme: c.bannerTheme,
+        bannerHeadline: c.bannerHeadline,
+        bannerSubtitle: c.bannerSubtitle,
+        bannerBadge: c.bannerBadge,
       })),
     });
   }
@@ -249,8 +254,47 @@ const getAvailableCoupons = asyncHandler(async (req, res) => {
       minOrderAmount: c.minOrderAmount,
       maxDiscount: c.maxDiscount,
       expiresAt: c.expiresAt,
+      showBanner: c.showBanner,
+      bannerTheme: c.bannerTheme,
+      bannerHeadline: c.bannerHeadline,
+      bannerSubtitle: c.bannerSubtitle,
+      bannerBadge: c.bannerBadge,
     })),
   });
+});
+
+/**
+ * PUBLIC: GET /api/subscription/public-offers
+ * Fetch active, non-expired coupons marked with showBanner: true for display on public pricing page or unauthenticated users.
+ */
+const getPublicOfferBanners = asyncHandler(async (req, res) => {
+  const now = new Date();
+  const banners = await prisma.coupon.findMany({
+    where: {
+      isActive: true,
+      showBanner: true,
+      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+    },
+    orderBy: [{ discountValue: "desc" }, { createdAt: "desc" }],
+    take: 5,
+    select: {
+      id: true,
+      code: true,
+      description: true,
+      discountType: true,
+      discountValue: true,
+      minOrderAmount: true,
+      maxDiscount: true,
+      expiresAt: true,
+      showBanner: true,
+      bannerTheme: true,
+      bannerHeadline: true,
+      bannerSubtitle: true,
+      bannerBadge: true,
+    },
+  });
+
+  return res.json({ banners });
 });
 
 /**
@@ -351,6 +395,11 @@ const createCoupon = asyncHandler(async (req, res) => {
     maxUses,
     maxUsesPerUser = 1,
     isPublic = false,
+    showBanner = false,
+    bannerTheme = "EMERALD",
+    bannerHeadline,
+    bannerSubtitle,
+    bannerBadge,
     expiresAt,
     isActive = true,
   } = req.body;
@@ -402,6 +451,11 @@ const createCoupon = asyncHandler(async (req, res) => {
       expiresAt: parsedExpiresAt,
       isActive: Boolean(isActive),
       isPublic: Boolean(isPublic),
+      showBanner: Boolean(showBanner),
+      bannerTheme: bannerTheme ? String(bannerTheme).trim() : "EMERALD",
+      bannerHeadline: bannerHeadline ? String(bannerHeadline).trim() : null,
+      bannerSubtitle: bannerSubtitle ? String(bannerSubtitle).trim() : null,
+      bannerBadge: bannerBadge ? String(bannerBadge).trim() : null,
       createdById: req.user.userId,
     },
   });
@@ -515,6 +569,11 @@ const updateCoupon = asyncHandler(async (req, res) => {
     description,
     maxDiscount,
     minOrderAmount,
+    showBanner,
+    bannerTheme,
+    bannerHeadline,
+    bannerSubtitle,
+    bannerBadge,
   } = req.body;
 
   const coupon = await prisma.coupon.findUnique({
@@ -533,6 +592,26 @@ const updateCoupon = asyncHandler(async (req, res) => {
 
   if (typeof isPublic === "boolean") {
     data.isPublic = isPublic;
+  }
+
+  if (typeof showBanner === "boolean") {
+    data.showBanner = showBanner;
+  }
+
+  if (bannerTheme !== undefined) {
+    data.bannerTheme = bannerTheme ? String(bannerTheme).trim() : "EMERALD";
+  }
+
+  if (bannerHeadline !== undefined) {
+    data.bannerHeadline = bannerHeadline ? String(bannerHeadline).trim() : null;
+  }
+
+  if (bannerSubtitle !== undefined) {
+    data.bannerSubtitle = bannerSubtitle ? String(bannerSubtitle).trim() : null;
+  }
+
+  if (bannerBadge !== undefined) {
+    data.bannerBadge = bannerBadge ? String(bannerBadge).trim() : null;
   }
 
   if (expiresAt !== undefined) {
@@ -615,6 +694,7 @@ module.exports = {
   calculateCouponDiscount,
   checkCouponPerUserLimit,
   getAvailableCoupons,
+  getPublicOfferBanners,
   validateCoupon,
   listCoupons,
   createCoupon,
