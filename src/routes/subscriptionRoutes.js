@@ -12,12 +12,13 @@ const {
   getInAppReminders,
   testSwitchPlan,
 } = require("../controllers/subscriptionController");
-const { validateCoupon, getAvailableCoupons } = require("../controllers/couponController");
+const { validateCoupon, getAvailableCoupons, getPublicOfferBanners } = require("../controllers/couponController");
 
 const router = express.Router();
 
 // Public webhook route (called directly by Razorpay servers without user JWT)
 router.post("/webhook", handleRazorpayWebhook);
+router.get("/public-offers", getPublicOfferBanners);
 
 // Protected routes (require user authentication)
 router.use(authMiddleware);

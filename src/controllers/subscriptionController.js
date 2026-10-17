@@ -900,7 +900,7 @@ const getInAppReminders = asyncHandler(async (req, res) => {
  */
 const testSwitchPlan = asyncHandler(async (req, res) => {
   // Allow test switching only when explicitly enabled via env
-  const isSimulatorEnabled = process.env.ENABLE_SUBSCRIPTION_SIMULATOR === "true";
+  const isSimulatorEnabled = String(process.env.ENABLE_SUBSCRIPTION_SIMULATOR).toLowerCase() === "true";
 
   if (!isSimulatorEnabled) {
     throw new AppError("Subscription plan simulator is disabled", 403);

@@ -552,6 +552,11 @@ model Coupon {
   expiresAt      DateTime?
   isActive       Boolean            @default(true)
   isPublic       Boolean            @default(false)
+  showBanner     Boolean            @default(false)
+  bannerTheme    String?            @default("EMERALD")
+  bannerHeadline String?
+  bannerSubtitle String?
+  bannerBadge    String?
   createdById    String?
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
@@ -560,5 +565,6 @@ model Coupon {
   @@index([code])
   @@index([isActive])
   @@index([isPublic])
+  @@index([showBanner])
   @@index([expiresAt])
 }
