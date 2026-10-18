@@ -18,6 +18,10 @@ model User {
   businessSubtitle           String?
   contactPhone               String?
   businessAddress            String?
+  isEmailVerified            Boolean                  @default(false)
+  isPhoneVerified            Boolean                  @default(false)
+  emailVerifiedAt            DateTime?
+  phoneVerifiedAt            DateTime?
   subscriptionPlan           String                   @default("TRIAL")
   billingCycle               String                   @default("MONTHLY")
   subscriptionStatus         String                   @default("ACTIVE")
@@ -568,3 +572,18 @@ model Coupon {
   @@index([showBanner])
   @@index([expiresAt])
 }
+
+model VerificationOtp {
+  id        String   @id @default(uuid())
+  userId    String
+  type      String   // "EMAIL" or "PHONE"
+  target    String   // email address or phone number
+  otpHash   String
+  expiresAt DateTime
+  attempts  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([userId, type])
+  @@index([target, type])
+}
+

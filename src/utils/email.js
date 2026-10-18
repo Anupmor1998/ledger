@@ -273,6 +273,71 @@ async function sendSupportTicketStatusUpdateToUser({
   }
 }
 
+async function sendVerificationEmailOtp(to, otp, name) {
+  const transporter = getTransporter();
+  if (!transporter || !to || !otp) {
+    return {
+      sent: false,
+      reason: !to ? "missing-recipient" : !otp ? "missing-otp" : "smtp-not-configured",
+    };
+  }
+
+  const cleanName = escapeHtml(name || "Broker / Partner");
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff; color: #1e293b;">
+      <div style="text-align: center; margin-bottom: 20px;">
+        <div style="display: inline-block; background-color: #0f766e; color: #ffffff; padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 700; letter-spacing: 0.5px;">
+          SAUDA BOOK
+        </div>
+        <h2 style="margin: 14px 0 6px 0; font-size: 20px; color: #0f172a; font-weight: 800;">
+          Verify Your Email Address
+        </h2>
+        <p style="margin: 0; font-size: 13px; color: #64748b;">
+          Hello ${cleanName}, welcome to Sauda Book!
+        </p>
+      </div>
+
+      <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 20px;">
+        <p style="margin: 0 0 10px 0; font-size: 12px; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;">
+          Your One-Time Verification Code
+        </p>
+        <div style="font-size: 36px; font-weight: 900; letter-spacing: 8px; color: #0f766e; font-family: monospace; padding: 6px 0;">
+          ${otp}
+        </div>
+        <p style="margin: 8px 0 0 0; font-size: 11px; color: #94a3b8;">
+          This verification OTP will expire in 10 minutes.
+        </p>
+      </div>
+
+      <p style="font-size: 12px; color: #64748b; line-height: 1.6; margin-bottom: 16px;">
+        Enter this 6-digit code in the Sauda Book verification screen to complete your email verification and unlock uninterrupted access to your textile ledger records and reports.
+      </p>
+
+      <div style="border-top: 1px solid #e2e8f0; padding-top: 14px; font-size: 11px; color: #94a3b8; text-align: center;">
+        If you did not request this verification code, please ignore this email or contact support.<br>
+        &copy; ${new Date().getFullYear()} Sauda Book. All rights reserved.
+      </div>
+    </div>
+  `;
+
+  try {
+    await transporter.sendMail({
+      from: PASSWORD_RESET_FROM_EMAIL || GMAIL_SMTP_EMAIL,
+      to,
+      subject: `${otp} is your Sauda Book Verification Code`,
+      html,
+    });
+    return { sent: true, reason: null };
+  } catch (error) {
+    logger.error("Verification email send failed", {
+      feature: "email-verification",
+      to,
+      error,
+    });
+    return { sent: false, reason: "smtp-send-failed" };
+  }
+}
+
 function escapeHtml(text) {
   if (!text) return "";
   return String(text)
@@ -285,6 +350,7 @@ function escapeHtml(text) {
 
 module.exports = {
   sendPasswordResetEmail,
+  sendVerificationEmailOtp,
   sendSupportTicketAdminAlert,
   sendSupportTicketStatusUpdateToUser,
   EMAIL_TRANSPORT_READY,

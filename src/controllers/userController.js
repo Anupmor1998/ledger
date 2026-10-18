@@ -1458,6 +1458,10 @@ const getMyProfile = asyncHandler(async (req, res) => {
       businessSubtitle: true,
       contactPhone: true,
       businessAddress: true,
+      isEmailVerified: true,
+      isPhoneVerified: true,
+      emailVerifiedAt: true,
+      phoneVerifiedAt: true,
       createdAt: true,
       updatedAt: true,
     },
@@ -1527,7 +1531,11 @@ const updateMyProfile = asyncHandler(async (req, res) => {
     if (!normalizedEmail) {
       throw new AppError("email cannot be empty", 400);
     }
-    updateData.email = normalizedEmail;
+    if (normalizedEmail !== user.email) {
+      updateData.email = normalizedEmail;
+      updateData.isEmailVerified = false;
+      updateData.emailVerifiedAt = null;
+    }
   }
 
   if (hasFirmName) {
@@ -1539,7 +1547,13 @@ const updateMyProfile = asyncHandler(async (req, res) => {
   }
 
   if (hasContactPhone) {
-    updateData.contactPhone = String(contactPhone || "").trim() || null;
+    const rawDigits = String(contactPhone || "").replace(/\D/g, "");
+    const cleanPhone = rawDigits.length >= 10 ? rawDigits.slice(-10) : rawDigits || null;
+    if (cleanPhone !== user.contactPhone) {
+      updateData.contactPhone = cleanPhone;
+      updateData.isPhoneVerified = false;
+      updateData.phoneVerifiedAt = null;
+    }
   }
 
   if (hasBusinessAddress) {
@@ -1574,6 +1588,10 @@ const updateMyProfile = asyncHandler(async (req, res) => {
       businessSubtitle: true,
       contactPhone: true,
       businessAddress: true,
+      isEmailVerified: true,
+      isPhoneVerified: true,
+      emailVerifiedAt: true,
+      phoneVerifiedAt: true,
       createdAt: true,
       updatedAt: true,
     },

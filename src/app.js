@@ -16,6 +16,7 @@ const userRoutes = require("./routes/userRoutes");
 const supportRoutes = require("./routes/supportRoutes");
 const directoryRoutes = require("./routes/directoryRoutes");
 const subscriptionRoutes = require("./routes/subscriptionRoutes");
+const verificationRoutes = require("./routes/verificationRoutes");
 const { CORS_ORIGINS } = require("./config/env");
 const requestLogger = require("./middlewares/requestLogger");
 const { notFoundHandler, errorHandler } = require("./middlewares/errorHandler");
@@ -61,6 +62,7 @@ app.use(`${apiPrefix}/reports`, reportRoutes);
 app.use(`${apiPrefix}/support`, supportRoutes);
 app.use(`${apiPrefix}/directory`, directoryRoutes);
 app.use(`${apiPrefix}/subscription`, subscriptionRoutes);
+app.use(`${apiPrefix}/verification`, verificationRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

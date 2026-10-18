@@ -23,6 +23,10 @@ function buildSessionUser(user) {
     businessSubtitle: user.businessSubtitle || null,
     contactPhone: user.contactPhone || null,
     businessAddress: user.businessAddress || null,
+    isEmailVerified: Boolean(user.isEmailVerified),
+    isPhoneVerified: Boolean(user.isPhoneVerified),
+    emailVerifiedAt: user.emailVerifiedAt || null,
+    phoneVerifiedAt: user.phoneVerifiedAt || null,
     subscriptionPlan:
       user.subscriptionPlan === "COMPLIMENTARY" ? "PREMIUM" : (user.subscriptionPlan || "TRIAL"),
     billingCycle:
@@ -58,14 +62,26 @@ function maskEmail(email) {
 }
 
 const signup = asyncHandler(async (req, res) => {
-  const { email, name, password } = req.body;
+  const { email, name, password, contactPhone } = req.body;
 
   if (!email || !password) {
-    throw new AppError("email and password are required", 400);
+    throw new AppError("Email and password are required", 400);
   }
 
   if (password.length < 8) {
-    throw new AppError("password must be at least 8 characters", 400);
+    throw new AppError("Password must be at least 8 characters", 400);
+  }
+
+  // Validate phone number
+  let cleanPhone = null;
+  if (contactPhone) {
+    const digits = String(contactPhone).replace(/\D/g, "");
+    if (digits.length < 10) {
+      throw new AppError("Please enter a valid 10-digit mobile number", 400);
+    }
+    cleanPhone = digits.slice(-10);
+  } else {
+    throw new AppError("Mobile phone number is required for signup", 400);
   }
 
   const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
@@ -74,10 +90,13 @@ const signup = asyncHandler(async (req, res) => {
     data: {
       email,
       name,
+      contactPhone: cleanPhone,
       password: passwordHash,
       role: "USER",
       selectedFinancialYearStart: getFinancialYearStartYear(),
       trialEndsAt,
+      isEmailVerified: false,
+      isPhoneVerified: false,
     },
     select: {
       id: true,
@@ -90,6 +109,10 @@ const signup = asyncHandler(async (req, res) => {
       businessSubtitle: true,
       contactPhone: true,
       businessAddress: true,
+      isEmailVerified: true,
+      isPhoneVerified: true,
+      emailVerifiedAt: true,
+      phoneVerifiedAt: true,
       subscriptionPlan: true,
       billingCycle: true,
       subscriptionStatus: true,
