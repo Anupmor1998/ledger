@@ -1509,18 +1509,28 @@ const createReportShareLink = asyncHandler(async (req, res) => {
     };
   }
  
-  // Generate a clean 8-character unique short code
-  const code = crypto.randomBytes(4).toString("hex");
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+  let shareToken = null;
+  try {
+    // Generate a clean 8-character unique short code
+    const code = crypto.randomBytes(4).toString("hex");
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
 
-  await prisma.reportShare.create({
-    data: {
-      code,
+    await prisma.reportShare.create({
+      data: {
+        code,
+        userId: req.user.userId,
+        payload: params,
+        expiresAt,
+      },
+    });
+    shareToken = code;
+  } catch (dbErr) {
+    // Fallback to stateless signed JWT if ReportShare table has not been migrated to DB yet
+    shareToken = createReportShareToken({
       userId: req.user.userId,
-      payload: params,
-      expiresAt,
-    },
-  });
+      ...params,
+    });
+  }
 
   const publicBase =
     process.env.PUBLIC_REPORTS_URL ||
@@ -1528,7 +1538,7 @@ const createReportShareLink = asyncHandler(async (req, res) => {
   const protocol = req.headers["x-forwarded-proto"] || req.protocol || "https";
   const host = req.headers["x-forwarded-host"] || req.get("host");
   const baseUrl = publicBase || `${protocol}://${host}`;
-  const shareUrl = `${baseUrl}/api/reports/shared/${code}.pdf`;
+  const shareUrl = `${baseUrl}/api/reports/shared/${shareToken}.pdf`;
 
   const partyName = party
     ? (party.firmName || party.name)
@@ -1547,7 +1557,7 @@ _Generated via Sauda Book_`;
 
   res.json({
     success: true,
-    shareToken: code,
+    shareToken,
     shareUrl,
     party: party
       ? {
@@ -1569,9 +1579,14 @@ const exportSharedReportPdf = asyncHandler(async (req, res) => {
   let payload = null;
 
   // 1. Try finding by short code in database
-  const shareRecord = await prisma.reportShare.findUnique({
-    where: { code: rawToken },
-  });
+  let shareRecord = null;
+  try {
+    shareRecord = await prisma.reportShare.findUnique({
+      where: { code: rawToken },
+    });
+  } catch (_dbErr) {
+    // Database table might not exist yet; fall back directly to JWT
+  }
 
   if (shareRecord) {
     if (shareRecord.expiresAt && shareRecord.expiresAt < new Date()) {
@@ -1579,7 +1594,7 @@ const exportSharedReportPdf = asyncHandler(async (req, res) => {
     }
     payload = shareRecord.payload;
   } else {
-    // 2. Fallback to verifying as JWT token for backward compatibility
+    // 2. Fallback to verifying as JWT token
     try {
       payload = verifyReportShareToken(rawToken);
     } catch (_err) {
