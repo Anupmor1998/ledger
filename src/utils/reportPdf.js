@@ -511,7 +511,7 @@ function renderSheet(doc, sheetConfig) {
   }
 }
 
-async function sendPdfReport(res, fileName, sheets, options = {}) {
+async function buildPdfBuffer(sheets, options = {}) {
   const layout =
     String(options?.orientation || "portrait").toLowerCase() === "landscape"
       ? "landscape"
@@ -532,7 +532,7 @@ async function sendPdfReport(res, fileName, sheets, options = {}) {
   doc.registerFont("ReportGujaratiBold", FONT_GUJARATI_BOLD);
 
   const chunks = [];
-  const pdfBuffer = await new Promise((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     doc.on("data", (chunk) => chunks.push(chunk));
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
@@ -546,20 +546,29 @@ async function sendPdfReport(res, fileName, sheets, options = {}) {
 
     doc.end();
   });
+}
 
-  res.setHeader("Content-Type", "application/pdf");
-  const encodedFileName = encodeURIComponent(fileName);
-  const dispositionType =
-    String(options?.disposition || "attachment").toLowerCase() === "inline"
-      ? "inline"
-      : "attachment";
-  res.setHeader(
-    "Content-Disposition",
-    `${dispositionType}; filename="${fileName.replace(/"/g, '')}"; filename*=UTF-8''${encodedFileName}`
-  );
-  res.end(pdfBuffer);
+async function sendPdfReport(res, fileName, sheets, options = {}) {
+  const pdfBuffer = await buildPdfBuffer(sheets, options);
+
+  if (res && !res.headersSent) {
+    res.setHeader("Content-Type", "application/pdf");
+    const encodedFileName = encodeURIComponent(fileName);
+    const dispositionType =
+      String(options?.disposition || "attachment").toLowerCase() === "inline"
+        ? "inline"
+        : "attachment";
+    res.setHeader(
+      "Content-Disposition",
+      `${dispositionType}; filename="${fileName.replace(/"/g, '')}"; filename*=UTF-8''${encodedFileName}`
+    );
+    res.end(pdfBuffer);
+  }
+
+  return { pdfBuffer, fileName };
 }
 
 module.exports = {
+  buildPdfBuffer,
   sendPdfReport,
 };
