@@ -452,7 +452,15 @@ function renderSheet(doc, sheetConfig) {
 
   if (sections.length > 0) {
     sections.forEach((section, sectionIndex) => {
-      if (sectionIndex > 0) {
+      if (section.pageBreakBefore && sectionIndex > 0) {
+        doc.addPage();
+        if (Array.isArray(section.pageBreakHeaderLines) && section.pageBreakHeaderLines.length > 0) {
+          section.pageBreakHeaderLines.forEach((line) =>
+            drawMergedRow(doc, getLineValue(line), line || {}, totalWidth),
+          );
+          doc.moveDown(0.5);
+        }
+      } else if (sectionIndex > 0) {
         doc.moveDown(0.5);
       }
 
@@ -541,9 +549,13 @@ async function sendPdfReport(res, fileName, sheets, options = {}) {
 
   res.setHeader("Content-Type", "application/pdf");
   const encodedFileName = encodeURIComponent(fileName);
+  const dispositionType =
+    String(options?.disposition || "attachment").toLowerCase() === "inline"
+      ? "inline"
+      : "attachment";
   res.setHeader(
     "Content-Disposition",
-    `attachment; filename="${fileName.replace(/"/g, '')}"; filename*=UTF-8''${encodedFileName}`
+    `${dispositionType}; filename="${fileName.replace(/"/g, '')}"; filename*=UTF-8''${encodedFileName}`
   );
   res.end(pdfBuffer);
 }
