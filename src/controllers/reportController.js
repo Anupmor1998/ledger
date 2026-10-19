@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const prisma = require("../config/prisma");
 const asyncHandler = require("../utils/asyncHandler");
 const { sendWorkbook } = require("../utils/reportExcel");
@@ -6,6 +7,10 @@ const {
   getFinancialYearStartYear,
   getFinancialYearLabel,
 } = require("../utils/financialYear");
+const {
+  createReportShareToken,
+  verifyReportShareToken,
+} = require("../utils/jwt");
 const AppError = require("../utils/appError");
 
 const ORDER_STATUS = {
@@ -457,29 +462,56 @@ async function getSelectedFinancialYearStartForUser(userId) {
   return user.selectedFinancialYearStart ?? getFinancialYearStartYear();
 }
 
+function parsePartyIds(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value.map((v) => String(v).trim()).filter(Boolean);
+  }
+  return String(value)
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
 async function getOrderFilters(query, userId) {
   const selectedFinancialYearStart =
     await getSelectedFinancialYearStartForUser(userId);
   const where = { userId, fyStartYear: selectedFinancialYearStart };
   const orderDate = buildDateFilter(query);
   if (orderDate) where.orderDate = orderDate;
-  if (query.customerId) where.customerId = query.customerId;
-  if (query.manufacturerId) where.manufacturerId = query.manufacturerId;
+
+  const customerIds = parsePartyIds(query.customerIds || query.customerId);
+  if (customerIds.length === 1) {
+    where.customerId = customerIds[0];
+  } else if (customerIds.length > 1) {
+    where.customerId = { in: customerIds };
+  }
+
+  const manufacturerIds = parsePartyIds(query.manufacturerIds || query.manufacturerId);
+  if (manufacturerIds.length === 1) {
+    where.manufacturerId = manufacturerIds[0];
+  } else if (manufacturerIds.length > 1) {
+    where.manufacturerId = { in: manufacturerIds };
+  }
+
   if (query.qualityId) where.qualityId = query.qualityId;
   return where;
 }
 
 async function getSelectedReportParty(query, reportType, userId) {
   const isManufacturerReport = reportType === "manufacturer";
-  const partyId = isManufacturerReport
-    ? query.manufacturerId
-    : query.customerId;
-  if (!partyId) {
+  const partyIds = parsePartyIds(
+    isManufacturerReport
+      ? query.manufacturerIds || query.manufacturerId
+      : query.customerIds || query.customerId,
+  );
+  if (partyIds.length !== 1) {
     return null;
   }
 
-  const where = { id: partyId, userId };
+  const where = { id: partyIds[0], userId };
   const select = {
+    id: true,
     firmName: true,
     name: true,
     address: true,
@@ -490,6 +522,32 @@ async function getSelectedReportParty(query, reportType, userId) {
   return isManufacturerReport
     ? prisma.manufacturer.findFirst({ where, select })
     : prisma.customer.findFirst({ where, select });
+}
+
+async function getSelectedReportParties(query, reportType, userId) {
+  const isManufacturerReport = reportType === "manufacturer";
+  const partyIds = parsePartyIds(
+    isManufacturerReport
+      ? query.manufacturerIds || query.manufacturerId
+      : query.customerIds || query.customerId,
+  );
+  if (partyIds.length === 0) {
+    return [];
+  }
+
+  const where = { id: { in: partyIds }, userId };
+  const select = {
+    id: true,
+    firmName: true,
+    name: true,
+    address: true,
+    phone: true,
+    commissionBase: true,
+  };
+
+  return isManufacturerReport
+    ? prisma.manufacturer.findMany({ where, select })
+    : prisma.customer.findMany({ where, select });
 }
 
 function getOrderInclude() {
@@ -701,9 +759,11 @@ function sortReportOrders(orders) {
 
 function isSpecificScope(query, reportType) {
   if (reportType === "manufacturer") {
-    return Boolean(String(query.manufacturerId || "").trim());
+    const ids = parsePartyIds(query.manufacturerIds || query.manufacturerId);
+    return ids.length === 1;
   }
-  return Boolean(String(query.customerId || "").trim());
+  const ids = parsePartyIds(query.customerIds || query.customerId);
+  return ids.length === 1;
 }
 
 function getScopeParty(order, reportType) {
@@ -888,6 +948,7 @@ function buildReportSections(
   paymentStatusFilter,
   partialPaymentEntries = [],
   manufacturerAccountStatusMap = new Map(),
+  options = {},
 ) {
   const groupMap = new Map();
   const specificScope = isSpecificScope(query, reportType);
@@ -951,8 +1012,14 @@ function buildReportSections(
   );
 
   const sections = [];
+  const pageGap = Boolean(
+    String(query?.pageGap ?? options?.pageGap ?? "").toLowerCase() === "true" ||
+    query?.pageGap === true ||
+    options?.pageGap === true,
+  );
+  const mainHeaderLines = options?.mainHeaderLines || [];
 
-  sortedScopes.forEach((scopeGroup) => {
+  sortedScopes.forEach((scopeGroup, scopeIndex) => {
     const sortedScopeOrders = sortReportOrders(scopeGroup.orders);
     const scopeTotals = computeReportTotals(scopeGroup.orders, reportType);
     const scopePartyId = scopeGroup.scopeParty?.id;
@@ -971,8 +1038,11 @@ function buildReportSections(
       reportType,
     );
 
+    const isPageBreak = pageGap && scopeIndex > 0;
+
     if (groupBy === REPORT_GROUP_BY.DATE) {
       sections.push({
+        pageBreakBefore: isPageBreak,
         headerLines: getScopeHeaderLines(scopeGroup.scopeParty, reportType),
         rows: [
           ...sortedScopeOrders.map((order) =>
@@ -1040,6 +1110,7 @@ function buildReportSections(
       );
 
       sections.push({
+        pageBreakBefore: index === 0 ? isPageBreak : false,
         headerLines:
           index === 0
             ? getScopeHeaderLines(scopeGroup.scopeParty, reportType)
@@ -1137,7 +1208,7 @@ function buildReportHeaderLines(user, selectedParty, reportType) {
   return lines;
 }
 
-async function exportReportByType(req, res, reportType, format = "xlsx") {
+async function exportReportByType(req, res, reportType, format = "xlsx", options = {}) {
   const normalizedFormat = String(format || "xlsx").toLowerCase();
   const status = normalizeStatusFilter(req.query.status);
   const paymentStatus = normalizePaymentStatusFilter(req.query.paymentStatus);
@@ -1158,6 +1229,11 @@ async function exportReportByType(req, res, reportType, format = "xlsx") {
     reportType,
     req.user.userId,
   );
+  const selectedParties = await getSelectedReportParties(
+    req.query,
+    reportType,
+    req.user.userId,
+  );
 
   let baseFileName = "";
   if (selectedParty) {
@@ -1168,6 +1244,19 @@ async function exportReportByType(req, res, reportType, format = "xlsx") {
       .replace(/[\s_]+/g, "_")
       .replace(/^_+|_+$/g, "");
     baseFileName = safePartyName || (isManufacturerReport ? "Manufacturer_Report" : "Customer_Report");
+  } else if (selectedParties.length > 1) {
+    const rawPartyNames = selectedParties
+      .slice(0, 3)
+      .map((p) => String(p.firmName || p.name || "").trim())
+      .filter(Boolean)
+      .join("_");
+    const safePartyNames = rawPartyNames
+      .replace(/[\\/:*?"<>|,;.]+/g, "_")
+      .replace(/[\s_]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+    baseFileName = safePartyNames
+      ? `${safePartyNames}${selectedParties.length > 3 ? `_and_${selectedParties.length - 3}_more` : ""}`
+      : (isManufacturerReport ? "Manufacturers_Report" : "Customers_Report");
   } else {
     baseFileName = isManufacturerReport ? "All_Manufacturers_Report" : "All_Customers_Report";
   }
@@ -1190,6 +1279,11 @@ async function exportReportByType(req, res, reportType, format = "xlsx") {
     includePaymentStatus,
     includeMeter,
   });
+  const mainCompanyHeaderLines = buildReportHeaderLines(
+    req.user,
+    null,
+    reportType,
+  );
   const headerLines = buildReportHeaderLines(
     req.user,
     selectedParty,
@@ -1201,10 +1295,11 @@ async function exportReportByType(req, res, reportType, format = "xlsx") {
   const manufacturerAccountStatusMap = new Map();
 
   if (isManufacturerReport) {
+    const queryPartyIds = parsePartyIds(req.query.manufacturerIds || req.query.manufacturerId);
     const partyIds = [
       ...new Set(
         [
-          req.query.manufacturerId,
+          ...queryPartyIds,
           ...rawOrders.map((o) => o.manufacturerId),
         ].filter(Boolean),
       ),
@@ -1273,23 +1368,22 @@ async function exportReportByType(req, res, reportType, format = "xlsx") {
     const includedMfrIds = new Set(
       orders.length > 0
         ? orders.map((o) => o.manufacturerId)
-        : req.query.manufacturerId
-          ? [req.query.manufacturerId]
-          : [],
+        : queryPartyIds,
     );
     partialPaymentEntries = manufacturerPaymentEntries.filter((p) =>
       includedMfrIds.has(p.manufacturerId),
     );
   } else {
-    // Customer report logic - completely unchanged
+    // Customer report logic
     orders = rawOrders.filter((order) =>
       matchesPaymentStatus(order, paymentStatus),
     );
 
+    const queryCustomerIds = parsePartyIds(req.query.customerIds || req.query.customerId);
     const partyIds = [
       ...new Set(
         [
-          req.query.customerId,
+          ...queryCustomerIds,
           ...orders.map((o) => o.customerId),
           ...rawOrders.map((o) => o.customerId),
         ].filter(Boolean),
@@ -1323,11 +1417,15 @@ async function exportReportByType(req, res, reportType, format = "xlsx") {
       paymentStatus,
       partialPaymentEntries,
       manufacturerAccountStatusMap,
+      {
+        pageGap: req.query.pageGap,
+      },
     ),
   };
 
   if (normalizedFormat === "pdf") {
-    await sendPdfReport(res, fileName, [sheetConfig], { orientation });
+    const disposition = String(req.query.disposition || options?.disposition || "attachment").toLowerCase();
+    await sendPdfReport(res, fileName, [sheetConfig], { orientation, disposition });
     return;
   }
 
@@ -1364,6 +1462,167 @@ const exportManufacturerReportPdf = asyncHandler(async (req, res) => {
   await exportReportByType(req, res, "manufacturer", "pdf");
 });
 
+const createReportShareLink = asyncHandler(async (req, res) => {
+  const userType = normalizeUserTypeFilter(req.query.userType || req.body.userType);
+
+  const params = {
+    userType,
+    from: req.body.from ?? req.query.from,
+    to: req.body.to ?? req.query.to,
+    customerId: req.body.customerId ?? req.query.customerId,
+    customerIds: req.body.customerIds ?? req.query.customerIds,
+    manufacturerId: req.body.manufacturerId ?? req.query.manufacturerId,
+    manufacturerIds: req.body.manufacturerIds ?? req.query.manufacturerIds,
+    qualityId: req.body.qualityId ?? req.query.qualityId,
+    status: req.body.status ?? req.query.status,
+    paymentStatus: req.body.paymentStatus ?? req.query.paymentStatus,
+    groupBy: req.body.groupBy ?? req.query.groupBy,
+    orientation: req.body.orientation || req.query.orientation || "portrait",
+    pageGap: req.body.pageGap ?? req.query.pageGap,
+    showPaymentStatus:
+      req.body.showPaymentStatus !== undefined
+        ? req.body.showPaymentStatus
+        : req.query.showPaymentStatus,
+    userId: req.user.userId,
+  };
+
+  const selectedParties = await getSelectedReportParties(
+    params,
+    userType === "MANUFACTURER" ? "manufacturer" : "customer",
+    req.user.userId,
+  );
+  let party = null;
+  if (selectedParties.length === 1) {
+    party = selectedParties[0];
+  } else if (selectedParties.length > 1) {
+    // Combine names for WhatsApp message
+    const combinedFirmNames = selectedParties
+      .map((p) => p.firmName || p.name)
+      .filter(Boolean)
+      .join(", ");
+    // Find first party with a phone number
+    const partyWithPhone = selectedParties.find((p) => p.phone);
+    party = {
+      name: selectedParties[0].name,
+      firmName: combinedFirmNames,
+      phone: partyWithPhone?.phone || "",
+    };
+  }
+ 
+  // Generate a clean 8-character unique short code
+  const code = crypto.randomBytes(4).toString("hex");
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+
+  await prisma.reportShare.create({
+    data: {
+      code,
+      userId: req.user.userId,
+      payload: params,
+      expiresAt,
+    },
+  });
+
+  const publicBase =
+    process.env.PUBLIC_REPORTS_URL ||
+    (process.env.NODE_ENV === "production" ? "https://saudabook.co.in" : null);
+  const protocol = req.headers["x-forwarded-proto"] || req.protocol || "https";
+  const host = req.headers["x-forwarded-host"] || req.get("host");
+  const baseUrl = publicBase || `${protocol}://${host}`;
+  const shareUrl = `${baseUrl}/api/reports/shared/${code}.pdf`;
+
+  const partyName = party
+    ? (party.firmName || party.name)
+    : (userType === "MANUFACTURER" ? "All Manufacturers" : "All Customers");
+  const dateRangeStr =
+    params.from && params.to ? `${params.from} to ${params.to}` : "All Records";
+
+  const whatsappText = `📄 *Statement of Account*
+*Firm*: ${partyName}
+*Period*: ${dateRangeStr}
+
+👉 *View / Download your Official PDF Statement:*
+${shareUrl}
+
+_Generated via Sauda Book_`;
+
+  res.json({
+    success: true,
+    shareToken: code,
+    shareUrl,
+    party: party
+      ? {
+          name: party.name,
+          firmName: party.firmName,
+          phone: party.phone,
+        }
+      : null,
+    whatsappText,
+  });
+});
+
+const exportSharedReportPdf = asyncHandler(async (req, res) => {
+  let rawToken = req.params.shareToken;
+  if (rawToken && rawToken.endsWith(".pdf")) {
+    rawToken = rawToken.slice(0, -4);
+  }
+
+  let payload = null;
+
+  // 1. Try finding by short code in database
+  const shareRecord = await prisma.reportShare.findUnique({
+    where: { code: rawToken },
+  });
+
+  if (shareRecord) {
+    if (shareRecord.expiresAt && shareRecord.expiresAt < new Date()) {
+      throw new AppError("This report share link has expired", 401);
+    }
+    payload = shareRecord.payload;
+  } else {
+    // 2. Fallback to verifying as JWT token for backward compatibility
+    try {
+      payload = verifyReportShareToken(rawToken);
+    } catch (_err) {
+      throw new AppError("Invalid or expired report share link", 401);
+    }
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: payload.userId },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+      firmName: true,
+      businessSubtitle: true,
+      contactPhone: true,
+      businessAddress: true,
+      subscriptionPlan: true,
+      subscriptionStatus: true,
+      billingCycle: true,
+      trialEndsAt: true,
+      planExpiresAt: true,
+    },
+  });
+
+  if (!user) {
+    throw new AppError("Report owner account not found", 404);
+  }
+
+  req.user = { userId: user.id, ...user };
+  req.query = {
+    ...payload,
+    disposition: "inline",
+  };
+
+  const reportType =
+    payload.userType === REPORT_USER_TYPE.MANUFACTURER
+      ? "manufacturer"
+      : "customer";
+  await exportReportByType(req, res, reportType, "pdf", { disposition: "inline" });
+});
+
 module.exports = {
   exportOrderReport,
   exportCustomerReport,
@@ -1371,4 +1630,6 @@ module.exports = {
   exportOrderReportPdf,
   exportCustomerReportPdf,
   exportManufacturerReportPdf,
+  createReportShareLink,
+  exportSharedReportPdf,
 };

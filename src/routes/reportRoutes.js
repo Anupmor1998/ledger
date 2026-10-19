@@ -11,12 +11,19 @@ const {
   exportOrderReportPdf,
   exportCustomerReportPdf,
   exportManufacturerReportPdf,
+  createReportShareLink,
+  exportSharedReportPdf,
 } = require("../controllers/reportController");
 
 const router = express.Router();
 
+// Public route: parties can view and download the shared branded PDF without logging in
+router.get("/shared/:shareToken", exportSharedReportPdf);
+
+// All routes below require authentication
 router.use(authMiddleware);
 
+router.post("/share-link", requireSubscriptionFeature("PDF_EXPORT"), createReportShareLink);
 router.get("/order-report.xlsx", requireActiveSubscription, exportOrderReport);
 router.get("/customer-report.xlsx", requireActiveSubscription, exportCustomerReport);
 router.get("/manufacturer-report.xlsx", requireActiveSubscription, exportManufacturerReport);

@@ -49,6 +49,7 @@ model User {
   customerQualities          CustomerQuality[]
   manufacturerQualities      ManufacturerQuality[]
   subscriptionPayments       SubscriptionPayment[]
+  reportShares               ReportShare[]
 }
 
 model SubscriptionPayment {
@@ -585,5 +586,18 @@ model VerificationOtp {
 
   @@index([userId, type])
   @@index([target, type])
+}
+
+model ReportShare {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  userId    String
+  payload   Json
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([code])
+  @@index([userId])
 }
 
