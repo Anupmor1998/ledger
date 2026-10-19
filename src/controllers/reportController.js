@@ -1534,7 +1534,7 @@ const createReportShareLink = asyncHandler(async (req, res) => {
 
   const publicBase =
     process.env.PUBLIC_REPORTS_URL ||
-    (process.env.NODE_ENV === "production" ? "https://saudabook.co.in" : null);
+    (process.env.NODE_ENV === "production" ? "https://api.saudabook.co.in" : null);
   const protocol = req.headers["x-forwarded-proto"] || req.protocol || "https";
   const host = req.headers["x-forwarded-host"] || req.get("host");
   const baseUrl = publicBase || `${protocol}://${host}`;
