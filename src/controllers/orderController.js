@@ -302,13 +302,38 @@ function addDays(dateValue, days) {
   return date;
 }
 
+const TRANSFER_ORDER_NO_BASE = 100000;
+
 async function getNextOrderNo(tx, userId, fyStartYear) {
   const lastOrder = await tx.order.findFirst({
-    where: { userId, fyStartYear },
+    where: {
+      userId,
+      fyStartYear,
+      isCarryForward: false,
+      orderNo: { lt: TRANSFER_ORDER_NO_BASE },
+    },
     orderBy: { orderNo: "desc" },
     select: { orderNo: true },
   });
-  return (lastOrder?.orderNo || 0) + 1;
+  let nextNo = (lastOrder?.orderNo || 0) + 1;
+
+  // Advance past any conflicting order number (e.g. legacy transfer orders occupying this number)
+  while (nextNo < TRANSFER_ORDER_NO_BASE) {
+    const conflict = await tx.order.findUnique({
+      where: {
+        userId_fyStartYear_orderNo: {
+          userId,
+          fyStartYear,
+          orderNo: nextNo,
+        },
+      },
+      select: { id: true },
+    });
+    if (!conflict) break;
+    nextNo += 1;
+  }
+
+  return nextNo;
 }
 
 async function getSelectedFinancialYearStartForUser(userId) {

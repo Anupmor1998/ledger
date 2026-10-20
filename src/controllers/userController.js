@@ -373,13 +373,51 @@ function analyzeYearTransferBatch(batch) {
   };
 }
 
+const TRANSFER_ORDER_NO_BASE = 100000;
+
 async function getNextOrderNo(tx, userId, fyStartYear) {
   const lastOrder = await tx.order.findFirst({
-    where: { userId, fyStartYear },
+    where: {
+      userId,
+      fyStartYear,
+      isCarryForward: false,
+      orderNo: { lt: TRANSFER_ORDER_NO_BASE },
+    },
     orderBy: { orderNo: "desc" },
     select: { orderNo: true },
   });
-  return (lastOrder?.orderNo || 0) + 1;
+  let nextNo = (lastOrder?.orderNo || 0) + 1;
+
+  // Advance past any conflicting order number (e.g. legacy transfer orders occupying this number)
+  while (nextNo < TRANSFER_ORDER_NO_BASE) {
+    const conflict = await tx.order.findUnique({
+      where: {
+        userId_fyStartYear_orderNo: {
+          userId,
+          fyStartYear,
+          orderNo: nextNo,
+        },
+      },
+      select: { id: true },
+    });
+    if (!conflict) break;
+    nextNo += 1;
+  }
+
+  return nextNo;
+}
+
+async function getNextTransferOrderNo(tx, userId, fyStartYear) {
+  const lastTransfer = await tx.order.findFirst({
+    where: {
+      userId,
+      fyStartYear,
+      orderNo: { gte: TRANSFER_ORDER_NO_BASE },
+    },
+    orderBy: { orderNo: "desc" },
+    select: { orderNo: true },
+  });
+  return Math.max(TRANSFER_ORDER_NO_BASE, lastTransfer?.orderNo || TRANSFER_ORDER_NO_BASE) + 1;
 }
 
 async function getNextPendingPaymentSerialNo(tx, userId, fyStartYear) {
@@ -899,7 +937,7 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
       },
     });
 
-    let nextOrderNo = await getNextOrderNo(tx, userId, targetFyStartYear);
+    let nextTransferOrderNo = await getNextTransferOrderNo(tx, userId, targetFyStartYear);
     let nextPendingPaymentSerialNo = await getNextPendingPaymentSerialNo(tx, userId, targetFyStartYear);
     const carriedOrderBySourceId = new Map();
 
@@ -939,27 +977,10 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
         ? `Carry forward note: source remaining quantity ${remainingQuantity.toFixed(2)} ${order.quantityUnit}; carried as ${carryQuantity} ${order.quantityUnit} in ${getFinancialYearLabel(targetFyStartYear)}.`
         : null;
 
-      // Preserve source order number if not already taken in target financial year
-      let targetOrderNo = order.orderNo;
-      if (sourceFyStartYear === targetFyStartYear) {
-        targetOrderNo = nextOrderNo;
-        nextOrderNo += 1;
-      } else {
-        const existingWithNo = await tx.order.findUnique({
-          where: {
-            userId_fyStartYear_orderNo: {
-              userId,
-              fyStartYear: targetFyStartYear,
-              orderNo: order.orderNo,
-            },
-          },
-          select: { id: true },
-        });
-        if (existingWithNo) {
-          targetOrderNo = nextOrderNo;
-          nextOrderNo += 1;
-        }
-      }
+      // Allocate order number in dedicated transfer range (100000+)
+      // so regular orders retain clean, uninterrupted sequential numbering (1, 2, 3...)
+      const targetOrderNo = nextTransferOrderNo;
+      nextTransferOrderNo += 1;
 
       const createdOrder = await tx.order.create({
         data: {
@@ -1065,27 +1086,10 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
           throw new AppError("source order for pending payment was not found", 404);
         }
 
-        // Preserve source order number if not already taken in target financial year
-        let targetOrderNo = sourceOrder.orderNo;
-        if (sourceFyStartYear === targetFyStartYear) {
-          targetOrderNo = nextOrderNo;
-          nextOrderNo += 1;
-        } else {
-          const existingWithNo = await tx.order.findUnique({
-            where: {
-              userId_fyStartYear_orderNo: {
-                userId,
-                fyStartYear: targetFyStartYear,
-                orderNo: sourceOrder.orderNo,
-              },
-            },
-            select: { id: true },
-          });
-          if (existingWithNo) {
-            targetOrderNo = nextOrderNo;
-            nextOrderNo += 1;
-          }
-        }
+        // Allocate order number in dedicated transfer range (100000+)
+        // so regular orders retain clean, uninterrupted sequential numbering (1, 2, 3...)
+        const targetOrderNo = nextTransferOrderNo;
+        nextTransferOrderNo += 1;
 
         const createdOrder = await tx.order.create({
           data: {

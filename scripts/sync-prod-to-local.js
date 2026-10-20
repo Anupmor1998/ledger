@@ -5,19 +5,28 @@ const { Client } = require("pg");
 // Explicit allowlist for the ledger app schema only.
 const TABLES = [
   "User",
+  "SubscriptionPayment",
   "PasswordResetToken",
   "Customer",
   "Manufacturer",
   "Quality",
+  "CustomerQuality",
+  "ManufacturerQuality",
+  "YearTransferBatch",
   "Order",
   "OrderActivity",
-  "PaymentReceipt",
   "PendingPayment",
+  "PaymentReceipt",
   "PaymentAllocation",
+  "PaymentEntry",
+  "PaymentOrderAllocation",
   "WhatsAppGroup",
   "RemarkTemplate",
-  "YearTransferBatch",
   "AdminActionLog",
+  "SupportTicket",
+  "Coupon",
+  "VerificationOtp",
+  "ReportShare",
 ];
 
 const BATCH_SIZE = 100;
@@ -187,6 +196,8 @@ async function main() {
     }
 
     await targetClient.query("BEGIN");
+    await targetClient.query("SET session_replication_role = 'replica'");
+
     if (tablesToSync.length > 0) {
       await targetClient.query(
         `TRUNCATE TABLE ${tablesToSync.map(quoteIdentifier).join(", ")} RESTART IDENTITY CASCADE`
@@ -197,9 +208,13 @@ async function main() {
       await syncTable(sourceClient, targetClient, tableName);
     }
 
+    await targetClient.query("SET session_replication_role = 'origin'");
     await targetClient.query("COMMIT");
     console.log("Production data copied to local database successfully.");
   } catch (error) {
+    try {
+      await targetClient.query("SET session_replication_role = 'origin'");
+    } catch (_) {}
     await targetClient.query("ROLLBACK");
     throw error;
   } finally {
