@@ -130,7 +130,7 @@ function requireSubscriptionFeature(feature) {
 
     if (!sub.hasFeature(feature)) {
       const messages = {
-        PDF_EXPORT: "Branded PDF Statement Exports are available on the Growth and Premium plans.",
+        PDF_EXPORT: "Branded PDF Statement Exports, interactive preview, and WhatsApp sharing are available on the Growth and Premium plans.",
         ANALYTICS: "Visual Analytics Dashboard is an exclusive feature of the Premium plan.",
         MARKET_DIRECTORY: "Market Directory Search is an exclusive feature of the Premium plan.",
       };
