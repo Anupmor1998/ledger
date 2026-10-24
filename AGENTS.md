@@ -36,3 +36,17 @@ This repository contains a production ledger system where order-related data is 
 - Keep changes small and focused.
 - Preserve existing behavior unless the user explicitly approves a change.
 - When in doubt, ask before proceeding.
+
+## UI / UX Icon Standards
+
+- **Strictly No Emoji Icons**: Never use raw unicode emojis (e.g., 💡, 🎉, ⚠️, 📦, etc.) for UI icons, buttons, badges, banners, tips, or modal headers.
+- **Consistent SVG Icons**: Always use consistent inline SVG icons matching the Lucide / Feather icon design system:
+  - `viewBox="0 0 24 24"`
+  - `fill="none"`
+  - `stroke="currentColor"`
+  - `strokeWidth="2"`
+  - `strokeLinecap="round"`
+  - `strokeLinejoin="round"`
+- **Icon Sizing & Clipping Prevention**:
+  - Always ensure SVG paths and circles stay safely inside the viewBox (e.g. use `r="9"` for 24x24 circle containers to avoid edge clipping on diverse displays).
+  - Add `shrink-0` when placing icons beside text in flex containers to prevent distortion.
