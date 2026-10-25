@@ -126,13 +126,13 @@ function roundCurrency(value) {
 
 function toLotQuantity({ quantity, quantityUnit, lotMeters }) {
   if (quantityUnit === QUANTITY_UNITS.LOT) {
-    return quantity;
+    return Math.round(quantity);
   }
   if (quantityUnit === QUANTITY_UNITS.TAKKA) {
-    return quantity / TAKKA_PER_LOT;
+    return Math.round(quantity / TAKKA_PER_LOT);
   }
   const effectiveLotMeters = Number(lotMeters || 0) > 0 ? Number(lotMeters) : 1450;
-  return quantity / effectiveLotMeters;
+  return Math.round(quantity / effectiveLotMeters);
 }
 
 function toMeterFromQuantity({ quantity, quantityUnit, lotMeters }) {

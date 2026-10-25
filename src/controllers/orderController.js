@@ -160,11 +160,72 @@ function computeProportionalCommissionAmount({
   return roundCurrency(normalizedFullCommission * completionRatio);
 }
 
+function computeLotBasedProgressCommission({
+  order,
+  quantity,
+  lotMeters,
+  commissionLotRate,
+}) {
+  if (commissionLotRate <= 0) return 0;
+  const bookedLots = toLotQuantity({
+    quantity,
+    quantityUnit: order?.quantityUnit,
+    lotMeters,
+  });
+  const processedQuantity = Number(order?.processedQuantity || 0);
+  const processedMeter = Number(order?.processedMeter || 0);
+
+  let deliveredLots = 0;
+  const unit = String(order?.quantityUnit || "").toUpperCase();
+  if (unit === QUANTITY_UNITS.LOT) {
+    deliveredLots = processedQuantity;
+  } else if (unit === QUANTITY_UNITS.TAKKA) {
+    deliveredLots = processedQuantity / TAKKA_PER_LOT;
+  } else if (processedMeter > 0 && Number.isFinite(lotMeters) && lotMeters > 0) {
+    deliveredLots = processedMeter / lotMeters;
+  } else if (processedQuantity > 0 && Number.isFinite(lotMeters) && lotMeters > 0) {
+    deliveredLots = processedQuantity / lotMeters;
+  }
+
+  if (deliveredLots <= 0) {
+    if (order?.status === ORDER_STATUS.COMPLETED) {
+      return roundCurrency(bookedLots * commissionLotRate);
+    }
+    return 0;
+  }
+
+  let effectiveLots = deliveredLots;
+  if (deliveredLots >= bookedLots) {
+    effectiveLots = Math.max(bookedLots, Math.round(deliveredLots));
+  } else {
+    const shortfall = bookedLots - deliveredLots;
+    if (shortfall <= 1.0) {
+      effectiveLots = bookedLots;
+    } else {
+      effectiveLots = Math.min(bookedLots, Math.round(deliveredLots));
+    }
+  }
+
+  return roundCurrency(effectiveLots * commissionLotRate);
+}
+
 function computeLiveProgressCommissionAmount(order) {
   const quantity = Number(order?.quantity || 0);
   const rate = Number(order?.rate || 0);
   const lotMeters = order?.lotMeters === null || order?.lotMeters === undefined ? null : Number(order.lotMeters);
   const commissionConfig = order?.customer || null;
+  const commissionBase = String(commissionConfig?.commissionBase || "PERCENT").toUpperCase();
+  const commissionLotRate = Number(commissionConfig?.commissionLotRate || 0);
+
+  if (commissionBase === "LOT") {
+    return computeLotBasedProgressCommission({
+      order,
+      quantity,
+      lotMeters,
+      commissionLotRate,
+    });
+  }
+
   const fullCommissionAmount = computeCommissionAmount({
     quantityForCommission: quantity,
     rate,
@@ -199,6 +260,22 @@ function computeLiveProgressManufacturerCommissionAmount(order) {
       ? null
       : Number(order.lotMeters);
   const commissionConfig = order?.manufacturer || null;
+  const commissionBase = String(
+    commissionConfig?.commissionBase || "LOT"
+  ).toUpperCase();
+  const commissionLotRate = Number(
+    commissionConfig?.commissionLotRate || 0
+  );
+
+  if (commissionBase === "LOT") {
+    return computeLotBasedProgressCommission({
+      order,
+      quantity,
+      lotMeters,
+      commissionLotRate,
+    });
+  }
+
   const fullCommissionAmount = computeManufacturerCommissionAmount({
     quantityForCommission: quantity,
     rate,
@@ -411,15 +488,15 @@ function convertQuantityToOrderUnit({ quantity, inputUnit, orderUnit, lotMeters 
 
 function toLotQuantity({ quantity, quantityUnit, lotMeters }) {
   if (quantityUnit === QUANTITY_UNITS.LOT) {
-    return quantity;
+    return Math.round(quantity);
   }
   if (quantityUnit === QUANTITY_UNITS.TAKKA) {
-    return quantity / TAKKA_PER_LOT;
+    return Math.round(quantity / TAKKA_PER_LOT);
   }
   if (!Number.isFinite(lotMeters) || lotMeters <= 0) {
     throw new AppError("lot meter value is required for METER to LOT conversion", 400);
   }
-  return quantity / lotMeters;
+  return Math.round(quantity / lotMeters);
 }
 
 function computeStoredLotValue({ quantity, quantityUnit, lotMeters }) {
