@@ -423,7 +423,22 @@ function getPartyDisplayName(party) {
   return String(party?.firmName || party?.name || "").trim();
 }
 
-function computeLotValue(order) {
+function computeLotValue(order, scopeParty = null) {
+  const party = scopeParty || order.customer;
+  const isLotBasis =
+    String(party?.commissionBase || "").toUpperCase() === "LOT";
+  const lotRate = Number(party?.commissionLotRate || 0);
+  const isManufacturer = party?.id && party.id === order.manufacturerId;
+  const commissionAmount = Number(
+    (isManufacturer
+      ? order.manufacturerCommissionAmount
+      : order.commissionAmount) ?? 0
+  );
+
+  if (isLotBasis && lotRate > 0 && commissionAmount > 0) {
+    return Math.round(commissionAmount / lotRate);
+  }
+
   if (order.lot !== null && order.lot !== undefined && order.lot !== "") {
     return Math.round(safeNumber(order.lot));
   }
@@ -678,7 +693,7 @@ function orderToReportRow(
 
   return {
     amount: roundCurrency(commissionAmount),
-    lot: computeLotValue(order),
+    lot: computeLotValue(order, scopeParty),
     quality: order.quality?.name || "",
     meter: meterValue,
     rate: round2(order.rate).toFixed(2),
@@ -695,12 +710,14 @@ function orderToReportRow(
 function computeReportTotals(orders, reportType = "customer") {
   return orders.reduce(
     (totals, order) => {
+      const scopeParty =
+        reportType === "manufacturer" ? order.manufacturer : order.customer;
       const commissionAmount =
         reportType === "manufacturer"
           ? order.manufacturerCommissionAmount ?? 0
           : order.commissionAmount ?? 0;
       totals.amount += roundCurrency(commissionAmount);
-      totals.lot += Number(computeLotValue(order) || 0);
+      totals.lot += Number(computeLotValue(order, scopeParty) || 0);
       return totals;
     },
     {
