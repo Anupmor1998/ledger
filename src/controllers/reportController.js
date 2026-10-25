@@ -439,6 +439,22 @@ function computeLotValue(order, scopeParty = null) {
     return Math.round(commissionAmount / lotRate);
   }
 
+  // If order is TRANSFERRED, it fulfilled only its processed portion in this period
+  if (order.status === ORDER_STATUS.TRANSFERRED) {
+    const processedQty = safeNumber(order.processedQuantity);
+    const unit = String(order.quantityUnit || "").toUpperCase();
+    const lotMeters = safeNumber(order.lotMeters);
+    if (unit === "LOT") {
+      return Math.round(processedQty);
+    }
+    if (unit === "TAKKA") {
+      return Math.round(processedQty / 12);
+    }
+    if (unit === "METER" && lotMeters > 0) {
+      return Math.round(processedQty / lotMeters);
+    }
+  }
+
   if (order.lot !== null && order.lot !== undefined && order.lot !== "") {
     return Math.round(safeNumber(order.lot));
   }
@@ -1232,11 +1248,33 @@ async function exportReportByType(req, res, reportType, format = "xlsx", options
   const groupBy = normalizeGroupByFilter(req.query.groupBy, reportType);
   const where = await getOrderFilters(req.query, req.user.userId);
   if (status) {
-    where.status = status;
+    if (status === ORDER_STATUS.COMPLETED) {
+      where.OR = [
+        { status: ORDER_STATUS.COMPLETED },
+        {
+          status: ORDER_STATUS.TRANSFERRED,
+          OR: [
+            { processedQuantity: { gt: 0 } },
+            { processedMeter: { gt: 0 } },
+            { commissionAmount: { gt: 0 } },
+          ],
+        },
+      ];
+    } else {
+      where.status = status;
+    }
   } else {
-    where.status = {
-      in: [ORDER_STATUS.PENDING, ORDER_STATUS.COMPLETED],
-    };
+    where.OR = [
+      { status: { in: [ORDER_STATUS.PENDING, ORDER_STATUS.COMPLETED] } },
+      {
+        status: ORDER_STATUS.TRANSFERRED,
+        OR: [
+          { processedQuantity: { gt: 0 } },
+          { processedMeter: { gt: 0 } },
+          { commissionAmount: { gt: 0 } },
+        ],
+      },
+    ];
   }
 
   const isManufacturerReport = reportType === "manufacturer";
