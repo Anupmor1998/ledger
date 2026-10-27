@@ -9,6 +9,7 @@ const {
   buildOrderAuditSnapshot,
   recordOrderActivity,
 } = require("../utils/orderActivity");
+const { syncPendingPaymentForOrder } = require("./orderController");
 
 const ALLOWED_THEMES = ["light", "dark"];
 const SALT_ROUNDS = 10;
@@ -1024,12 +1025,17 @@ const executeYearTransfer = asyncHandler(async (req, res) => {
       });
 
       // Mark source order as TRANSFERRED
-      await tx.order.update({
+      const updatedSourceOrder = await tx.order.update({
         where: { id: order.id },
         data: {
           status: "TRANSFERRED",
         },
+        include: {
+          customer: true,
+        },
       });
+
+      await syncPendingPaymentForOrder(tx, updatedSourceOrder);
 
       await recordOrderActivity(tx, {
         userId,

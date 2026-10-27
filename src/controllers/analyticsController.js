@@ -6,15 +6,41 @@ const {
   getFinancialYearLabel,
 } = require("../utils/financialYear");
 
+function isOrderCommissionEarned(order) {
+  const status = String(order?.status || "").toUpperCase();
+  if (status === "COMPLETED") return true;
+  if (status === "TRANSFERRED") {
+    const processedQuantity = Number(order?.processedQuantity || 0);
+    const processedMeter = Number(order?.processedMeter || 0);
+    const commissionAmount = Number(order?.commissionAmount || 0);
+    return (processedQuantity > 0 || processedMeter > 0) && commissionAmount > 0;
+  }
+  return false;
+}
+
 function computeLotValue(order) {
+  const status = String(order?.status || "").toUpperCase();
+  const processedQuantity = Number(order?.processedQuantity || 0);
+  const unit = String(order?.quantityUnit || "").toUpperCase();
+  const lotMeters = Number(order?.lotMeters || 0);
+
+  if (status === "TRANSFERRED" && processedQuantity > 0) {
+    if (unit === "LOT") {
+      return Math.round(processedQuantity);
+    }
+    if (unit === "TAKKA") {
+      return Math.round(processedQuantity / 12);
+    }
+    if (unit === "METER" && lotMeters > 0) {
+      return Math.round(processedQuantity / lotMeters);
+    }
+  }
+
   if (order?.lot !== null && order?.lot !== undefined && order?.lot !== "") {
     return Math.round(Number(order.lot) || 0);
   }
 
   const quantity = Number(order?.quantity || 0);
-  const unit = String(order?.quantityUnit || "").toUpperCase();
-  const lotMeters = Number(order?.lotMeters || 0);
-
   if (unit === "LOT") {
     return Math.round(quantity);
   }
@@ -84,11 +110,13 @@ function buildTopParties(orders, partyKey, limit = 10) {
     const entry = partyMap.get(partyId);
     entry.totalLot += computeLotValue(order);
     entry.totalOrders += 1;
-    const comm =
-      partyKey === "manufacturer"
-        ? Number(order.manufacturerCommissionAmount ?? 0)
-        : Number(order.commissionAmount ?? 0);
-    entry.totalCommission += Math.round(comm);
+    if (isOrderCommissionEarned(order)) {
+      const comm =
+        partyKey === "manufacturer"
+          ? Number(order.manufacturerCommissionAmount ?? 0)
+          : Number(order.commissionAmount ?? 0);
+      entry.totalCommission += Math.round(comm);
+    }
   });
 
   return [...partyMap.values()]
@@ -206,6 +234,9 @@ function buildCommissionTrend(orders, fyMonths, anchorDate) {
   });
 
   orders.forEach((order) => {
+    if (!isOrderCommissionEarned(order)) {
+      return;
+    }
     const orderDate = new Date(order.orderDate);
     const key = formatMonthKey(orderDate);
     const customerCommission = Math.round(Number(order.commissionAmount || 0));
@@ -252,11 +283,12 @@ function buildKeyMetrics(orders) {
         ) / 10
       : 0;
 
-  const customerTotalCommission = nonCancelledOrders.reduce(
+  const earnedOrders = orders.filter(isOrderCommissionEarned);
+  const customerTotalCommission = earnedOrders.reduce(
     (sum, o) => sum + Math.round(Number(o.commissionAmount || 0)),
     0,
   );
-  const manufacturerTotalCommission = nonCancelledOrders.reduce(
+  const manufacturerTotalCommission = earnedOrders.reduce(
     (sum, o) => sum + Math.round(Number(o.manufacturerCommissionAmount || 0)),
     0,
   );
@@ -334,6 +366,8 @@ const getAnalytics = asyncHandler(async (req, res) => {
     manufacturerCommissionAmount: true,
     lot: true,
     quantity: true,
+    processedQuantity: true,
+    processedMeter: true,
     quantityUnit: true,
     lotMeters: true,
     customerId: true,

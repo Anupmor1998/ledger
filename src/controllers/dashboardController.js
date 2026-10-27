@@ -29,14 +29,28 @@ function formatDayLabel(date) {
 }
 
 function computeLotValue(order) {
+  const status = String(order?.status || "").toUpperCase();
+  const processedQuantity = Number(order?.processedQuantity || 0);
+  const unit = String(order?.quantityUnit || "").toUpperCase();
+  const lotMeters = Number(order?.lotMeters || 0);
+
+  if (status === "TRANSFERRED" && processedQuantity > 0) {
+    if (unit === "LOT") {
+      return Math.round(processedQuantity);
+    }
+    if (unit === "TAKKA") {
+      return Math.round(processedQuantity / 12);
+    }
+    if (unit === "METER" && lotMeters > 0) {
+      return Math.round(processedQuantity / lotMeters);
+    }
+  }
+
   if (order?.lot !== null && order?.lot !== undefined && order?.lot !== "") {
     return Math.round(Number(order.lot) || 0);
   }
 
   const quantity = Number(order?.quantity || 0);
-  const unit = String(order?.quantityUnit || "").toUpperCase();
-  const lotMeters = Number(order?.lotMeters || 0);
-
   if (unit === "LOT") {
     return Math.round(quantity);
   }
@@ -174,6 +188,8 @@ const getDashboardSummary = require("../utils/asyncHandler")(async (req, res) =>
       commissionAmount: true,
       lot: true,
       quantity: true,
+      processedQuantity: true,
+      processedMeter: true,
       quantityUnit: true,
       lotMeters: true,
       manufacturerId: true,
@@ -209,12 +225,18 @@ const getDashboardSummary = require("../utils/asyncHandler")(async (req, res) =>
     }
     totalLotInFinancialYear += lotValue;
 
-    if (status !== "CANCELLED") {
+    const processedQuantity = Number(order.processedQuantity || 0);
+    const processedMeter = Number(order.processedMeter || 0);
+    const isEarnedOrder =
+      status === "COMPLETED" ||
+      (status === "TRANSFERRED" && (processedQuantity > 0 || processedMeter > 0) && commissionAmount > 0);
+
+    if (isEarnedOrder) {
       totalCustomerCommission += commissionAmount;
       totalManufacturerCommission += manufacturerCommissionAmount;
     }
 
-    if (order.manufacturerId && status !== "CANCELLED") {
+    if (order.manufacturerId && isEarnedOrder) {
       const current = mfrCommissionEarnedMap.get(order.manufacturerId) || 0;
       mfrCommissionEarnedMap.set(
         order.manufacturerId,
@@ -292,8 +314,10 @@ const getDashboardSummary = require("../utils/asyncHandler")(async (req, res) =>
     },
     select: {
       fyStartYear: true,
+      status: true,
       lot: true,
       quantity: true,
+      processedQuantity: true,
       quantityUnit: true,
       lotMeters: true,
     },

@@ -670,7 +670,21 @@ function computeOrderAmounts(
 }
 
 function getPendingPaymentAccountName(order) {
-  return String(order?.customer?.firmName || order?.customer?.name || "").trim();
+  return String(order?.customer?.firmName || order?.customer?.name || order?.customerName || "").trim();
+}
+
+function shouldHavePendingPayment(order) {
+  const status = String(order?.status || "").toUpperCase();
+  if (status === ORDER_STATUS.COMPLETED) {
+    return true;
+  }
+  if (status === "TRANSFERRED") {
+    const processedQuantity = Number(order?.processedQuantity || 0);
+    const processedMeter = Number(order?.processedMeter || 0);
+    const commissionAmount = Number(order?.commissionAmount || 0);
+    return (processedQuantity > 0 || processedMeter > 0) && commissionAmount > 0;
+  }
+  return false;
 }
 
 async function syncPendingPaymentForCompletedOrder(tx, order) {
@@ -679,8 +693,17 @@ async function syncPendingPaymentForCompletedOrder(tx, order) {
     return null;
   }
 
-  const accountName = getPendingPaymentAccountName(order);
-  const paymentDueOn = Number(order?.paymentDueOn);
+  let customer = order?.customer;
+  if (!customer && order?.customerId) {
+    customer = await tx.party.findUnique({
+      where: { id: order.customerId },
+      select: { firmName: true, name: true, paymentDueOn: true },
+    });
+  }
+  const accountName = String(
+    customer?.firmName || customer?.name || getPendingPaymentAccountName(order) || ""
+  ).trim();
+  const paymentDueOn = Number(order?.paymentDueOn ?? customer?.paymentDueOn);
   const dueDate =
     Number.isInteger(paymentDueOn) && paymentDueOn >= 0 ? addDays(order.orderDate, paymentDueOn) : null;
 
@@ -764,7 +787,7 @@ async function syncPendingPaymentForCompletedOrder(tx, order) {
 }
 
 async function syncPendingPaymentForOrder(tx, order) {
-  if (order.status === ORDER_STATUS.COMPLETED) {
+  if (shouldHavePendingPayment(order)) {
     return syncPendingPaymentForCompletedOrder(tx, order);
   }
 
@@ -2169,6 +2192,7 @@ const deleteOrder = asyncHandler(async (req, res) => {
 });
 
 module.exports = {
+  syncPendingPaymentForOrder,
   createOrder,
   listOrders,
   getOrderById,
