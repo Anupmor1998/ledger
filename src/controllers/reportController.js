@@ -781,8 +781,25 @@ function getGroupDisplayName(groupValue, groupBy) {
   return `${label}: UNKNOWN`;
 }
 
-function sortReportOrders(orders) {
+function sortReportOrders(orders, groupBy = REPORT_GROUP_BY.DATE) {
   return [...orders].sort((a, b) => {
+    if (groupBy === REPORT_GROUP_BY.QUALITY) {
+      const qA = String(a.quality?.name || "").trim();
+      const qB = String(b.quality?.name || "").trim();
+      const qComp = qA.localeCompare(qB, undefined, { sensitivity: "base" });
+      if (qComp !== 0) return qComp;
+    } else if (groupBy === REPORT_GROUP_BY.MANUFACTURER) {
+      const mA = String(a.manufacturer?.firmName || a.manufacturer?.name || "").trim();
+      const mB = String(b.manufacturer?.firmName || b.manufacturer?.name || "").trim();
+      const mComp = mA.localeCompare(mB, undefined, { sensitivity: "base" });
+      if (mComp !== 0) return mComp;
+    } else if (groupBy === REPORT_GROUP_BY.CUSTOMER) {
+      const cA = String(a.customer?.firmName || a.customer?.name || "").trim();
+      const cB = String(b.customer?.firmName || b.customer?.name || "").trim();
+      const cComp = cA.localeCompare(cB, undefined, { sensitivity: "base" });
+      if (cComp !== 0) return cComp;
+    }
+
     const dateA = new Date(a.orderDate || 0).getTime();
     const dateB = new Date(b.orderDate || 0).getTime();
     if (dateA !== dateB) return dateA - dateB;
@@ -998,20 +1015,19 @@ function buildReportSections(
     const sections = [
       {
         showHeader: true,
-        rows: sortReportOrders(orders).map((order) =>
-          orderToReportRow(
-            order,
-            reportType,
-            paymentStatusFilter,
-            manufacturerAccountStatusMap,
+        rows: [
+          ...sortReportOrders(orders, groupBy).map((order) =>
+            orderToReportRow(
+              order,
+              reportType,
+              paymentStatusFilter,
+              manufacturerAccountStatusMap,
+            ),
           ),
-        ),
+          ...finalTotalRows,
+        ],
       },
     ];
-    sections.push({
-      showHeader: false,
-      rows: finalTotalRows,
-    });
     return sections;
   }
 
@@ -1053,7 +1069,7 @@ function buildReportSections(
   const mainHeaderLines = options?.mainHeaderLines || [];
 
   sortedScopes.forEach((scopeGroup, scopeIndex) => {
-    const sortedScopeOrders = sortReportOrders(scopeGroup.orders);
+    const sortedScopeOrders = sortReportOrders(scopeGroup.orders, groupBy);
     const scopeTotals = computeReportTotals(scopeGroup.orders, reportType);
     const scopePartyId = scopeGroup.scopeParty?.id;
     const scopePartialEntries = Array.isArray(partialPaymentEntries)
@@ -1073,94 +1089,29 @@ function buildReportSections(
 
     const isPageBreak = pageGap && scopeIndex > 0;
 
-    if (groupBy === REPORT_GROUP_BY.DATE) {
-      sections.push({
-        pageBreakBefore: isPageBreak,
-        headerLines: getScopeHeaderLines(scopeGroup.scopeParty, reportType),
-        rows: [
-          ...sortedScopeOrders.map((order) =>
-            orderToReportRow(
-              order,
-              reportType,
-              paymentStatusFilter,
-              manufacturerAccountStatusMap,
-            ),
+    sections.push({
+      pageBreakBefore: isPageBreak,
+      headerLines: getScopeHeaderLines(scopeGroup.scopeParty, reportType),
+      rows: [
+        ...sortedScopeOrders.map((order) =>
+          orderToReportRow(
+            order,
+            reportType,
+            paymentStatusFilter,
+            manufacturerAccountStatusMap,
           ),
-          ...scopeTotalRows,
-        ],
-        footerLines: [
-          {
-            value: "=========================",
-            alignment: "center",
-            fontSize: 11,
-            bold: true,
-            height: 18,
-          },
-        ],
-      });
-      return;
-    }
-
-    const innerMap = new Map();
-    sortedScopeOrders.forEach((order) => {
-      const groupValue = getGroupValue(order, groupBy);
-      const innerKey =
-        groupValue?.id ||
-        `${String(groupValue?.firmName || groupValue?.name || "")
-          .trim()
-          .toLowerCase()}::${String(groupValue?.name || "")
-          .trim()
-          .toLowerCase()}` ||
-        "unknown";
-
-      if (!innerMap.has(innerKey)) {
-        innerMap.set(innerKey, {
-          groupValue,
-          orders: [],
-        });
-      }
-
-      innerMap.get(innerKey).orders.push(order);
-    });
-
-    const sortedInnerGroups = [...innerMap.values()].sort((left, right) =>
-      getGroupDisplayName(left.groupValue, groupBy).localeCompare(
-        getGroupDisplayName(right.groupValue, groupBy),
-        undefined,
-        { sensitivity: "base" },
-      ),
-    );
-
-    sortedInnerGroups.forEach((innerGroup, index) => {
-      const isLastInner = index === sortedInnerGroups.length - 1;
-      const innerRows = sortReportOrders(innerGroup.orders).map((order) =>
-        orderToReportRow(
-          order,
-          reportType,
-          paymentStatusFilter,
-          manufacturerAccountStatusMap,
         ),
-      );
-
-      sections.push({
-        pageBreakBefore: index === 0 ? isPageBreak : false,
-        headerLines:
-          index === 0
-            ? getScopeHeaderLines(scopeGroup.scopeParty, reportType)
-            : [],
-        rows: isLastInner ? [...innerRows, ...scopeTotalRows] : innerRows,
-        footerLines: isLastInner
-          ? [
-              {
-                value: "=========================",
-                alignment: "center",
-                fontSize: 11,
-                bold: true,
-                height: 18,
-              },
-            ]
-          : [],
-      });
+        ...scopeTotalRows,
+      ],
+      footerLines: [
+        {
+          value: "=========================",
+          alignment: "center",
+          fontSize: 11,
+          bold: true,
+          height: 18,
+        },
+      ],
     });
   });
 
