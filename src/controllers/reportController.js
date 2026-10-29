@@ -1007,30 +1007,126 @@ function buildReportSections(
     finalTotals,
     partialPaymentEntries,
     orders,
-    "",
+    "Grand Total",
     reportType,
   );
 
   if (specificScope) {
-    const sections = [
-      {
-        showHeader: true,
-        rows: [
-          ...sortReportOrders(orders, groupBy).map((order) =>
-            orderToReportRow(
-              order,
-              reportType,
-              paymentStatusFilter,
-              manufacturerAccountStatusMap,
+    if (groupBy === REPORT_GROUP_BY.DATE) {
+      const defaultTotalRows = buildFinalTotalRows(
+        finalTotals,
+        partialPaymentEntries,
+        orders,
+        "",
+        reportType,
+      );
+      return [
+        {
+          showHeader: true,
+          rows: [
+            ...sortReportOrders(orders, groupBy).map((order) =>
+              orderToReportRow(
+                order,
+                reportType,
+                paymentStatusFilter,
+                manufacturerAccountStatusMap,
+              ),
             ),
-          ),
-          ...finalTotalRows,
+            ...defaultTotalRows,
+          ],
+        },
+      ];
+    }
+
+    // Grouping by quality, manufacturer, or customer
+    const innerMap = new Map();
+    orders.forEach((order) => {
+      const groupValue = getGroupValue(order, groupBy);
+      const innerKey =
+        groupValue?.id ||
+        `${String(groupValue?.firmName || groupValue?.name || "")
+          .trim()
+          .toLowerCase()}::${String(groupValue?.name || "")
+          .trim()
+          .toLowerCase()}` ||
+        "unknown";
+
+      if (!innerMap.has(innerKey)) {
+        innerMap.set(innerKey, {
+          groupValue,
+          orders: [],
+        });
+      }
+
+      innerMap.get(innerKey).orders.push(order);
+    });
+
+    const sortedInnerGroups = [...innerMap.values()].sort((left, right) =>
+      getGroupDisplayName(left.groupValue, groupBy).localeCompare(
+        getGroupDisplayName(right.groupValue, groupBy),
+        undefined,
+        { sensitivity: "base" },
+      ),
+    );
+
+    const sections = [];
+    sortedInnerGroups.forEach((innerGroup, index) => {
+      const isFirst = index === 0;
+      const groupDisplayName = getGroupDisplayName(innerGroup.groupValue, groupBy);
+      const groupOrders = sortReportOrders(innerGroup.orders, REPORT_GROUP_BY.DATE);
+      const groupTotals = computeReportTotals(groupOrders, reportType);
+      const groupTotalRow = buildFinalTotalRow(
+        groupTotals,
+        "",
+      );
+
+      const groupRows = groupOrders.map((order) =>
+        orderToReportRow(
+          order,
+          reportType,
+          paymentStatusFilter,
+          manufacturerAccountStatusMap,
+        ),
+      );
+
+      sections.push({
+        showHeader: isFirst,
+        rows: [
+          ...groupRows,
+          groupTotalRow,
         ],
-      },
-    ];
+        footerLines: [
+          {
+            value: "=========================",
+            alignment: "center",
+            fontSize: 11,
+            bold: true,
+            height: 18,
+          },
+        ],
+      });
+    });
+
+    if (sortedInnerGroups.length > 1 || finalTotalRows.length > 1) {
+      sections.push({
+        showHeader: false,
+        rows: finalTotalRows,
+        footerLines: [
+          {
+            value: "=========================",
+            alignment: "center",
+            fontSize: 11,
+            bold: true,
+            height: 18,
+          },
+        ],
+      });
+    }
+
     return sections;
   }
 
+  // Multi-party scope (e.g. all customer report)
   orders.forEach((order) => {
     const scopeParty = getScopeParty(order, reportType);
     const scopeKey =
@@ -1069,9 +1165,9 @@ function buildReportSections(
   const mainHeaderLines = options?.mainHeaderLines || [];
 
   sortedScopes.forEach((scopeGroup, scopeIndex) => {
-    const sortedScopeOrders = sortReportOrders(scopeGroup.orders, groupBy);
-    const scopeTotals = computeReportTotals(scopeGroup.orders, reportType);
+    const isPageBreak = pageGap && scopeIndex > 0;
     const scopePartyId = scopeGroup.scopeParty?.id;
+    const scopeTotals = computeReportTotals(scopeGroup.orders, reportType);
     const scopePartialEntries = Array.isArray(partialPaymentEntries)
       ? partialPaymentEntries.filter((e) =>
           reportType === "manufacturer"
@@ -1087,31 +1183,107 @@ function buildReportSections(
       reportType,
     );
 
-    const isPageBreak = pageGap && scopeIndex > 0;
-
-    sections.push({
-      pageBreakBefore: isPageBreak,
-      headerLines: getScopeHeaderLines(scopeGroup.scopeParty, reportType),
-      rows: [
-        ...sortedScopeOrders.map((order) =>
-          orderToReportRow(
-            order,
-            reportType,
-            paymentStatusFilter,
-            manufacturerAccountStatusMap,
+    if (groupBy === REPORT_GROUP_BY.DATE) {
+      const sortedScopeOrders = sortReportOrders(scopeGroup.orders, groupBy);
+      sections.push({
+        pageBreakBefore: isPageBreak,
+        headerLines: getScopeHeaderLines(scopeGroup.scopeParty, reportType),
+        rows: [
+          ...sortedScopeOrders.map((order) =>
+            orderToReportRow(
+              order,
+              reportType,
+              paymentStatusFilter,
+              manufacturerAccountStatusMap,
+            ),
           ),
+          ...scopeTotalRows,
+        ],
+        footerLines: [
+          {
+            value: "=========================",
+            alignment: "center",
+            fontSize: 11,
+            bold: true,
+            height: 18,
+          },
+        ],
+      });
+      return;
+    }
+
+    // Multi-party with groupBy (quality, manufacturer, or customer)
+    const innerMap = new Map();
+    scopeGroup.orders.forEach((order) => {
+      const groupValue = getGroupValue(order, groupBy);
+      const innerKey =
+        groupValue?.id ||
+        `${String(groupValue?.firmName || groupValue?.name || "")
+          .trim()
+          .toLowerCase()}::${String(groupValue?.name || "")
+          .trim()
+          .toLowerCase()}` ||
+        "unknown";
+
+      if (!innerMap.has(innerKey)) {
+        innerMap.set(innerKey, {
+          groupValue,
+          orders: [],
+        });
+      }
+
+      innerMap.get(innerKey).orders.push(order);
+    });
+
+    const sortedInnerGroups = [...innerMap.values()].sort((left, right) =>
+      getGroupDisplayName(left.groupValue, groupBy).localeCompare(
+        getGroupDisplayName(right.groupValue, groupBy),
+        undefined,
+        { sensitivity: "base" },
+      ),
+    );
+
+    sortedInnerGroups.forEach((innerGroup, innerIndex) => {
+      const isFirstInner = innerIndex === 0;
+      const isLastInner = innerIndex === sortedInnerGroups.length - 1;
+      const groupDisplayName = getGroupDisplayName(innerGroup.groupValue, groupBy);
+      const groupOrders = sortReportOrders(innerGroup.orders, REPORT_GROUP_BY.DATE);
+      const groupTotals = computeReportTotals(groupOrders, reportType);
+      const groupTotalRow = buildFinalTotalRow(
+        groupTotals,
+        "",
+      );
+
+      const groupRows = groupOrders.map((order) =>
+        orderToReportRow(
+          order,
+          reportType,
+          paymentStatusFilter,
+          manufacturerAccountStatusMap,
         ),
-        ...scopeTotalRows,
-      ],
-      footerLines: [
-        {
-          value: "=========================",
-          alignment: "center",
-          fontSize: 11,
-          bold: true,
-          height: 18,
-        },
-      ],
+      );
+
+      sections.push({
+        pageBreakBefore: isFirstInner ? isPageBreak : false,
+        headerLines: isFirstInner
+          ? getScopeHeaderLines(scopeGroup.scopeParty, reportType)
+          : [],
+        showHeader: isFirstInner,
+        rows: [
+          ...groupRows,
+          groupTotalRow,
+          ...(isLastInner && (sortedInnerGroups.length > 1 || scopeTotalRows.length > 1) ? scopeTotalRows : []),
+        ],
+        footerLines: [
+          {
+            value: "=========================",
+            alignment: "center",
+            fontSize: 11,
+            bold: true,
+            height: 18,
+          },
+        ],
+      });
     });
   });
 
@@ -1126,6 +1298,15 @@ function buildReportSections(
   sections.push({
     showHeader: false,
     rows: grandTotalRows,
+    footerLines: [
+      {
+        value: "=========================",
+        alignment: "center",
+        fontSize: 11,
+        bold: true,
+        height: 18,
+      },
+    ],
   });
 
   return sections;
