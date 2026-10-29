@@ -8,6 +8,7 @@ const ADMIN_COLLECTIONS = {
       { value: "id", label: "ID" },
       { value: "name", label: "Name" },
       { value: "email", label: "Email" },
+      { value: "contactPhone", label: "Phone" },
       { value: "firmName", label: "Firm Name" },
       { value: "role", label: "Role" },
       { value: "subscriptionPlan", label: "Plan" },
@@ -19,6 +20,7 @@ const ADMIN_COLLECTIONS = {
     searchFields: [
       { value: "name", label: "Name" },
       { value: "email", label: "Email" },
+      { value: "contactPhone", label: "Phone" },
       { value: "firmName", label: "Firm Name" },
       { value: "role", label: "Role" },
       { value: "subscriptionPlan", label: "Plan" },
@@ -29,6 +31,7 @@ const ADMIN_COLLECTIONS = {
       "updatedAt",
       "name",
       "email",
+      "contactPhone",
       "firmName",
       "role",
       "subscriptionPlan",
