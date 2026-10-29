@@ -37,7 +37,7 @@ const ADMIN_COLLECTIONS = {
     ],
     hiddenFields: ["password"],
     allowCreate: false,
-    allowDelete: false,
+    allowDelete: true,
   },
   subscriptionPayments: {
     key: "subscriptionPayments",

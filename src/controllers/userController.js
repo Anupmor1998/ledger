@@ -1,4 +1,5 @@
 const bcrypt = require("bcryptjs");
+const { deleteUserAccount } = require("../services/userService");
 const prisma = require("../config/prisma");
 const AppError = require("../utils/appError");
 const asyncHandler = require("../utils/asyncHandler");
@@ -1730,7 +1731,36 @@ const deleteMyWhatsAppGroup = asyncHandler(async (req, res) => {
   return res.status(204).send();
 });
 
+const deleteMyAccount = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+  const { password } = req.body;
+
+  if (!password || typeof password !== "string") {
+    throw new AppError("Password is required to delete your account", 400);
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, email: true, password: true, role: true },
+  });
+
+  if (!user) {
+    throw new AppError("User not found", 404);
+  }
+
+  const isPasswordValid = await bcrypt.compare(password, user.password);
+  if (!isPasswordValid) {
+    throw new AppError("Incorrect password", 400);
+  }
+
+  await deleteUserAccount(userId);
+
+  return res.json({
+    message: "Your account and all associated data have been permanently deleted.",
+  });
+});
 module.exports = {
+  deleteMyAccount,
   listUsers,
   getMyProfile,
   getMyPreferences,
