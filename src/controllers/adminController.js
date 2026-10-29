@@ -1,4 +1,5 @@
 const prisma = require("../config/prisma");
+const { deleteUserAccount } = require("../services/userService");
 const AppError = require("../utils/appError");
 const asyncHandler = require("../utils/asyncHandler");
 const {
@@ -313,7 +314,14 @@ const deleteCollectionRecord = asyncHandler(async (req, res) => {
     throw new AppError("record not found", 404);
   }
 
-  await delegate.delete({ where: { id } });
+  if (config.key === "users") {
+    if (id === req.user.userId) {
+      throw new AppError("You cannot delete your own account from the Admin Panel. Please use Profile page.", 400);
+    }
+    await deleteUserAccount(id);
+  } else {
+    await delegate.delete({ where: { id } });
+  }
   await logAdminAction(req, {
     action: "DELETE",
     collectionKey: config.key,

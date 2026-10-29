@@ -7,6 +7,7 @@ const {
   getMyPreferences,
   updateMyPreferences,
   updateMyProfile,
+  deleteMyAccount,
   listMyRemarkTemplates,
   createMyRemarkTemplate,
   deleteMyRemarkTemplate,
@@ -28,6 +29,7 @@ router.use(authMiddleware);
 router.get("/", listUsers);
 router.get("/me", getMyProfile);
 router.put("/me", updateMyProfile);
+router.delete("/me", deleteMyAccount);
 router.get("/me/preferences", getMyPreferences);
 router.put("/me/preferences", updateMyPreferences);
 router.get("/me/year-transfer/preview", previewYearTransfer);
