@@ -3,6 +3,7 @@ const prisma = require("../config/prisma");
 const AppError = require("../utils/appError");
 const asyncHandler = require("../utils/asyncHandler");
 const { PLAN_PRICING, calculateProrationCredit } = require("../utils/subscriptionPricing");
+const { broadcastPushNotification } = require("../utils/pushNotifications");
 
 /**
  * Validate a coupon and calculate discount against a given amount
@@ -459,6 +460,27 @@ const createCoupon = asyncHandler(async (req, res) => {
       createdById: req.user.userId,
     },
   });
+
+  // Dispatch Web Push Notification to all users if coupon is PUBLIC & ACTIVE
+  if (coupon.isPublic && coupon.isActive) {
+    const discountText =
+      coupon.discountType === "PERCENTAGE"
+        ? `${coupon.discountValue}% OFF`
+        : `₹${coupon.discountValue} OFF`;
+    const pushTitle = coupon.bannerHeadline || `New Offer: ${discountText} with code ${coupon.code}`;
+    const pushBody =
+      coupon.bannerSubtitle ||
+      coupon.description ||
+      `Use promo code ${coupon.code} at checkout to save ${discountText} on your subscription plan!`;
+
+    broadcastPushNotification(prisma, {
+      title: pushTitle,
+      body: pushBody,
+      url: `/subscription?coupon=${coupon.code}`,
+    }).catch((err) => {
+      // Non-blocking background push error
+    });
+  }
 
   return res.status(201).json({
     message: "Coupon created successfully.",

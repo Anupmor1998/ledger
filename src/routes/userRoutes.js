@@ -7,6 +7,9 @@ const {
   getMyPreferences,
   updateMyPreferences,
   updateMyProfile,
+  registerDeviceToken,
+  unregisterDeviceToken,
+  sendTestPushNotification,
   deleteMyAccount,
   listMyRemarkTemplates,
   createMyRemarkTemplate,
@@ -30,6 +33,9 @@ router.get("/", listUsers);
 router.get("/me", getMyProfile);
 router.put("/me", updateMyProfile);
 router.delete("/me", deleteMyAccount);
+router.post("/me/device-token", registerDeviceToken);
+router.delete("/me/device-token", unregisterDeviceToken);
+router.post("/me/test-push", sendTestPushNotification);
 router.get("/me/preferences", getMyPreferences);
 router.put("/me/preferences", updateMyPreferences);
 router.get("/me/year-transfer/preview", previewYearTransfer);

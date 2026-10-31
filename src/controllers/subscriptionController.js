@@ -883,9 +883,72 @@ const getInAppReminders = asyncHandler(async (req, res) => {
     });
   }
 
+  // 4. Active Public Offers & Discount Coupons (strictly exclude private coupons)
+  const now = new Date();
+  const publicCoupons = await prisma.coupon.findMany({
+    where: {
+      isActive: true,
+      isPublic: true,
+      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+    },
+    orderBy: [{ discountValue: "desc" }, { createdAt: "desc" }],
+    take: 3,
+  });
+
+  // Filter out any coupon whose global max uses limit has already been exhausted
+  const availablePublicCoupons = publicCoupons.filter(
+    (c) => !c.maxUses || c.usedCount < c.maxUses
+  );
+
+  if (availablePublicCoupons.length > 0) {
+    // Check which coupons the current user has already used
+    const userRedemptions = await prisma.subscriptionPayment.groupBy({
+      by: ["couponId"],
+      where: {
+        userId,
+        status: "SUCCESS",
+        couponId: { in: availablePublicCoupons.map((c) => c.id) },
+      },
+      _count: { id: true },
+    });
+
+    const redemptionMap = new Map();
+    userRedemptions.forEach((r) => {
+      if (r.couponId) redemptionMap.set(r.couponId, r._count.id);
+    });
+
+    availablePublicCoupons.forEach((coupon) => {
+      const userUsed = redemptionMap.get(coupon.id) || 0;
+      const maxPerUser = coupon.maxUsesPerUser || 1;
+      if (userUsed < maxPerUser) {
+        const discountText =
+          coupon.discountType === "PERCENTAGE"
+            ? `${coupon.discountValue}% OFF`
+            : `₹${coupon.discountValue} OFF`;
+
+        const title = coupon.bannerHeadline || `Special Offer: ${discountText} with code ${coupon.code}`;
+        const description =
+          coupon.bannerSubtitle ||
+          coupon.description ||
+          `Use promo code ${coupon.code} at checkout to save ${discountText} on your subscription plan.`;
+
+        reminders.push({
+          id: `coupon-${coupon.id}`,
+          type: "OFFER",
+          category: "SPECIAL OFFER",
+          title,
+          message: description,
+          actionLabel: `Apply ${coupon.code}`,
+          actionUrl: `/subscription?coupon=${coupon.code}`,
+          createdAt: coupon.createdAt ? new Date(coupon.createdAt).toISOString() : new Date().toISOString(),
+        });
+      }
+    });
+  }
+
   return res.json({
     reminders,
-    unreadCount: reminders.filter((r) => r.type === "URGENT" || r.type === "WARNING").length,
+    unreadCount: reminders.filter((r) => r.type === "URGENT" || r.type === "WARNING" || r.type === "OFFER").length,
     subscriptionState: {
       plan: sub.plan,
       daysRemaining: sub.daysRemaining,

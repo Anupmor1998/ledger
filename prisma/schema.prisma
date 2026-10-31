@@ -50,6 +50,7 @@ model User {
   manufacturerQualities      ManufacturerQuality[]
   subscriptionPayments       SubscriptionPayment[]
   reportShares               ReportShare[]
+  deviceTokens               DeviceToken[]
 }
 
 model SubscriptionPayment {
@@ -601,3 +602,15 @@ model ReportShare {
   @@index([userId])
 }
 
+
+model DeviceToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  userAgent String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}

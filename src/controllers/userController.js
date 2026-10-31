@@ -1759,7 +1759,91 @@ const deleteMyAccount = asyncHandler(async (req, res) => {
     message: "Your account and all associated data have been permanently deleted.",
   });
 });
+
+const registerDeviceToken = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+  const { token, userAgent } = req.body;
+
+  if (!token || typeof token !== "string" || !token.trim()) {
+    throw new AppError("FCM Device token is required", 400);
+  }
+
+  const cleanToken = token.trim();
+
+  // Upsert the token to link it with current user
+  const record = await prisma.deviceToken.upsert({
+    where: { token: cleanToken },
+    update: {
+      userId,
+      userAgent: userAgent ? String(userAgent).slice(0, 255) : null,
+      updatedAt: new Date(),
+    },
+    create: {
+      userId,
+      token: cleanToken,
+      userAgent: userAgent ? String(userAgent).slice(0, 255) : null,
+    },
+  });
+
+  return res.json({
+    message: "Device token registered successfully",
+    id: record.id,
+  });
+});
+
+const unregisterDeviceToken = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+  const { token } = req.body;
+
+  if (token) {
+    await prisma.deviceToken.deleteMany({
+      where: {
+        userId,
+        token: String(token).trim(),
+      },
+    });
+  }
+
+  return res.json({ message: "Device token unregistered successfully" });
+});
+
+const sendTestPushNotification = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+  const userTokens = await prisma.deviceToken.findMany({
+    where: { userId },
+    select: { token: true },
+  });
+
+  if (!userTokens.length) {
+    return res.status(400).json({
+      message: "No device tokens registered for this account yet. Please click 'Turn On Notifications' in your browser first.",
+      tokenCount: 0,
+    });
+  }
+
+  const { sendPushNotificationToTokens } = require("../utils/pushNotifications");
+  const result = await sendPushNotificationToTokens(
+    userTokens.map((t) => t.token),
+    {
+      title: "Sauda Book Push Notification",
+      body: "Desktop push notifications are working smoothly on your browser!",
+      url: "/dashboard",
+    },
+    prisma
+  );
+
+  return res.json({
+    message: "Test notification dispatched.",
+    successCount: result.successCount,
+    failureCount: result.failureCount,
+    tokenCount: userTokens.length,
+  });
+});
+
 module.exports = {
+  registerDeviceToken,
+  unregisterDeviceToken,
+  sendTestPushNotification,
   deleteMyAccount,
   listUsers,
   getMyProfile,
