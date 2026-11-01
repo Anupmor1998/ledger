@@ -21,12 +21,17 @@ function getTransporter() {
   }
 
   if (!cachedTransporter) {
+    const cleanUser = String(GMAIL_SMTP_EMAIL || "").trim();
+    const cleanPass = String(GMAIL_SMTP_APP_PASSWORD || "").trim().replace(/^["']|["']$/g, "");
     cachedTransporter = nodemailer.createTransport({
       service: "gmail",
       auth: {
-        user: GMAIL_SMTP_EMAIL,
-        pass: GMAIL_SMTP_APP_PASSWORD,
+        user: cleanUser,
+        pass: cleanPass,
       },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000,
     });
   }
 
@@ -275,14 +280,34 @@ async function sendSupportTicketStatusUpdateToUser({
 
 async function sendVerificationEmailOtp(to, otp, name) {
   const transporter = getTransporter();
-  if (!transporter || !to || !otp) {
+  const cleanTo = String(to || "").trim().toLowerCase();
+  if (!transporter || !cleanTo || !otp) {
+    logger.warn("sendVerificationEmailOtp skipped", {
+      hasTransporter: Boolean(transporter),
+      hasRecipient: Boolean(cleanTo),
+      hasOtp: Boolean(otp),
+    });
     return {
       sent: false,
-      reason: !to ? "missing-recipient" : !otp ? "missing-otp" : "smtp-not-configured",
+      reason: !cleanTo ? "missing-recipient" : !otp ? "missing-otp" : "smtp-not-configured",
     };
   }
 
   const cleanName = escapeHtml(name || "Broker / Partner");
+  const fromAddress = GMAIL_SMTP_EMAIL
+    ? `"Sauda Book" <${String(GMAIL_SMTP_EMAIL).trim()}>`
+    : (PASSWORD_RESET_FROM_EMAIL || "saudabook2026@gmail.com");
+
+  const text = `Hello ${cleanName},
+
+Your one-time verification code for Sauda Book is: ${otp}
+
+This verification code expires in 10 minutes.
+Enter this 6-digit code in the Sauda Book verification screen to complete your email verification.
+
+If you did not request this verification code, please ignore this email.
+(C) ${new Date().getFullYear()} Sauda Book. All rights reserved.`;
+
   const html = `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff; color: #1e293b;">
       <div style="text-align: center; margin-bottom: 20px;">
@@ -321,20 +346,26 @@ async function sendVerificationEmailOtp(to, otp, name) {
   `;
 
   try {
-    await transporter.sendMail({
-      from: PASSWORD_RESET_FROM_EMAIL || GMAIL_SMTP_EMAIL,
-      to,
+    const info = await transporter.sendMail({
+      from: fromAddress,
+      to: cleanTo,
+      replyTo: GMAIL_SMTP_EMAIL ? String(GMAIL_SMTP_EMAIL).trim() : undefined,
       subject: `${otp} is your Sauda Book Verification Code`,
+      text,
       html,
     });
-    return { sent: true, reason: null };
+    logger.info("Verification email sent successfully", {
+      to: cleanTo,
+      messageId: info.messageId,
+    });
+    return { sent: true, reason: null, messageId: info.messageId };
   } catch (error) {
     logger.error("Verification email send failed", {
       feature: "email-verification",
-      to,
-      error,
+      to: cleanTo,
+      error: error.message,
     });
-    return { sent: false, reason: "smtp-send-failed" };
+    return { sent: false, reason: error.message || "smtp-send-failed" };
   }
 }
 

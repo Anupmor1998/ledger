@@ -65,7 +65,12 @@ const sendEmailOtp = asyncHandler(async (req, res) => {
     });
   }
 
-  // Check rate limit: 60s cooldown
+  const cleanEmail = String(user.email || "").trim().toLowerCase();
+  if (!cleanEmail || !cleanEmail.includes("@")) {
+    throw new AppError("No valid email address found on your account. Please update your email in settings.", 400);
+  }
+
+  // Check rate limit: 60s cooldown from last attempted OTP
   const lastOtp = await prisma.verificationOtp.findFirst({
     where: {
       userId,
@@ -86,6 +91,21 @@ const sendEmailOtp = asyncHandler(async (req, res) => {
   const otpHash = hashOtp(rawOtp);
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
+  // Send email FIRST to ensure SMTP delivers before persisting OTP
+  const mailResult = await sendVerificationEmailOtp(cleanEmail, rawOtp, user.name);
+  if (!mailResult.sent) {
+    logger.error("Email verification OTP delivery failed", {
+      userId,
+      email: cleanEmail,
+      reason: mailResult.reason,
+    });
+    const errorMsg =
+      mailResult.reason === "smtp-not-configured"
+        ? "Email verification service is temporarily unavailable. Please contact support."
+        : `Unable to send verification email (${mailResult.reason || "delivery error"}). Please verify your email address or try again.`;
+    throw new AppError(errorMsg, 500);
+  }
+
   // Invalidate any older OTPs for this user & email
   await prisma.verificationOtp.deleteMany({
     where: { userId, type: "EMAIL" },
@@ -95,23 +115,14 @@ const sendEmailOtp = asyncHandler(async (req, res) => {
     data: {
       userId,
       type: "EMAIL",
-      target: user.email,
+      target: cleanEmail,
       otpHash,
       expiresAt,
     },
   });
 
-  const mailResult = await sendVerificationEmailOtp(user.email, rawOtp, user.name);
-  if (!mailResult.sent) {
-    logger.warn("Email verification OTP delivery warning", {
-      userId,
-      email: user.email,
-      reason: mailResult.reason,
-    });
-  }
-
   return res.json({
-    message: `Verification code sent to ${user.email}`,
+    message: `Verification code sent to ${cleanEmail}`,
     expiresInSeconds: 600,
   });
 });
