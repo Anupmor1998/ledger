@@ -65,49 +65,135 @@ async function sendMailWithFailover(mailOptions) {
   }
 }
 
-async function sendPasswordResetEmail(to, resetUrl) {
-  const transporter = getTransporter();
-  if (!transporter || !to || !resetUrl) {
-    return {
-      sent: false,
-      reason: !to
-        ? "missing-recipient"
-        : !resetUrl
-          ? "missing-reset-url"
-          : "smtp-not-configured",
-    };
+
+const BREVO_API_KEY = process.env.BREVO_API_KEY;
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+
+/**
+ * Universal email sender that routes over HTTPS Port 443 (Brevo / Resend)
+ * to bypass Render.com's outbound SMTP port blocking (ports 25, 465, 587).
+ * Falls back to Nodemailer SMTP on local/paid servers.
+ */
+async function sendUniversalEmail({ to, subject, html, text, name }) {
+  const cleanTo = String(to || "").trim().toLowerCase();
+  const cleanFromEmail = String(GMAIL_SMTP_EMAIL || PASSWORD_RESET_FROM_EMAIL || "saudabook2026@gmail.com").trim();
+
+  // 1. Brevo REST API (HTTPS Port 443 - 300 free emails/day, immune to Render SMTP block)
+  if (process.env.BREVO_API_KEY) {
+    try {
+      const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+        method: "POST",
+        headers: {
+          "api-key": process.env.BREVO_API_KEY.trim(),
+          "Content-Type": "application/json",
+          accept: "application/json",
+        },
+        body: JSON.stringify({
+          sender: { name: "Sauda Book", email: cleanFromEmail },
+          to: [{ email: cleanTo, name: name || "Broker / Partner" }],
+          subject,
+          htmlContent: html,
+          textContent: text,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.message || `Brevo HTTP error ${res.status}`);
+      }
+      logger.info("Email delivered via Brevo HTTPS API", { to: cleanTo, messageId: data.messageId });
+      return { sent: true, reason: null, messageId: data.messageId };
+    } catch (err) {
+      logger.error("Brevo HTTPS API delivery failed", { error: err.message });
+      // Fall through to next provider
+    }
   }
 
+  // 2. Resend REST API (HTTPS Port 443 - 3,000 free emails/mo)
+  if (process.env.RESEND_API_KEY) {
+    try {
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.RESEND_API_KEY.trim()}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from: process.env.RESEND_FROM_EMAIL || "Sauda Book <onboarding@resend.dev>",
+          to: [cleanTo],
+          subject,
+          html,
+          text,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.message || `Resend HTTP error ${res.status}`);
+      }
+      logger.info("Email delivered via Resend HTTPS API", { to: cleanTo, id: data.id });
+      return { sent: true, reason: null, messageId: data.id };
+    } catch (err) {
+      logger.error("Resend HTTPS API delivery failed", { error: err.message });
+      // Fall through to next provider
+    }
+  }
+
+  // 3. Fallback to direct SMTP (works on local and paid cloud hosting)
+  if (!EMAIL_TRANSPORT_READY) {
+    return { sent: false, reason: "smtp-not-configured" };
+  }
+
+  const fromAddress = `"Sauda Book" <${cleanFromEmail}>`;
   try {
-    await sendMailWithFailover({
-      from: PASSWORD_RESET_FROM_EMAIL || GMAIL_SMTP_EMAIL,
-      to,
-      subject: "Sauda Book Password Reset",
-      html: `
-        <p>You requested a password reset for your Sauda Book account.</p>
-        <p>
-          <a href="${resetUrl}" target="_blank" rel="noopener noreferrer">
-            Reset your password
-          </a>
-        </p>
-        <p>This link expires in 15 minutes.</p>
-        <p>If you did not request this, you can ignore this email.</p>
-      `,
+    const info = await sendMailWithFailover({
+      from: fromAddress,
+      to: cleanTo,
+      replyTo: cleanFromEmail,
+      subject,
+      text,
+      html,
     });
+    logger.info("Email delivered via direct SMTP", { to: cleanTo, messageId: info.messageId });
+    return { sent: true, reason: null, messageId: info.messageId };
+  } catch (err) {
+    logger.error("SMTP delivery failed", { error: err.message, to: cleanTo });
+    return { sent: false, reason: err.message || "smtp-send-failed" };
+  }
+}
 
-    return { sent: true, reason: null };
-  } catch (error) {
-    logger.error("Password reset email send failed", {
-      feature: "forgot-password",
-      to,
-      reason: "smtp-send-failed",
-      error,
-    });
+async function sendPasswordResetEmail(to, resetUrl) {
+  const cleanTo = String(to || "").trim().toLowerCase();
+  if (!cleanTo || !resetUrl) {
     return {
       sent: false,
-      reason: "smtp-send-failed",
+      reason: !cleanTo ? "missing-recipient" : "missing-reset-url",
     };
   }
+
+  const html = `
+    <p>You requested a password reset for your Sauda Book account.</p>
+    <p>
+      <a href="${resetUrl}" target="_blank" rel="noopener noreferrer">
+        Reset your password
+      </a>
+    </p>
+    <p>This link expires in 15 minutes.</p>
+    <p>If you did not request this, you can ignore this email.</p>
+  `;
+
+  const text = `You requested a password reset for your Sauda Book account.
+Reset your password: ${resetUrl}
+This link expires in 15 minutes.
+If you did not request this, you can ignore this email.`;
+
+  return await sendUniversalEmail({
+    to: cleanTo,
+    subject: "Sauda Book Password Reset",
+    html,
+    text,
+    name: "User",
+  });
 }
 
 async function sendSupportTicketAdminAlert({ ticket, user, adminEmails }) {
@@ -306,25 +392,15 @@ async function sendSupportTicketStatusUpdateToUser({
 }
 
 async function sendVerificationEmailOtp(to, otp, name) {
-  const transporter = getTransporter();
   const cleanTo = String(to || "").trim().toLowerCase();
-  if (!transporter || !cleanTo || !otp) {
-    logger.warn("sendVerificationEmailOtp skipped", {
-      hasTransporter: Boolean(transporter),
-      hasRecipient: Boolean(cleanTo),
-      hasOtp: Boolean(otp),
-    });
+  if (!cleanTo || !otp) {
     return {
       sent: false,
-      reason: !cleanTo ? "missing-recipient" : !otp ? "missing-otp" : "smtp-not-configured",
+      reason: !cleanTo ? "missing-recipient" : "missing-otp",
     };
   }
 
   const cleanName = escapeHtml(name || "Broker / Partner");
-  const fromAddress = GMAIL_SMTP_EMAIL
-    ? `"Sauda Book" <${String(GMAIL_SMTP_EMAIL).trim()}>`
-    : (PASSWORD_RESET_FROM_EMAIL || "saudabook2026@gmail.com");
-
   const text = `Hello ${cleanName},
 
 Your one-time verification code for Sauda Book is: ${otp}
@@ -372,28 +448,13 @@ If you did not request this verification code, please ignore this email.
     </div>
   `;
 
-  try {
-    const info = await sendMailWithFailover({
-      from: fromAddress,
-      to: cleanTo,
-      replyTo: GMAIL_SMTP_EMAIL ? String(GMAIL_SMTP_EMAIL).trim() : undefined,
-      subject: `${otp} is your Sauda Book Verification Code`,
-      text,
-      html,
-    });
-    logger.info("Verification email sent successfully", {
-      to: cleanTo,
-      messageId: info.messageId,
-    });
-    return { sent: true, reason: null, messageId: info.messageId };
-  } catch (error) {
-    logger.error("Verification email send failed", {
-      feature: "email-verification",
-      to: cleanTo,
-      error: error.message,
-    });
-    return { sent: false, reason: error.message || "smtp-send-failed" };
-  }
+  return await sendUniversalEmail({
+    to: cleanTo,
+    subject: `${otp} is your Sauda Book Verification Code`,
+    html,
+    text,
+    name: cleanName,
+  });
 }
 
 function escapeHtml(text) {
