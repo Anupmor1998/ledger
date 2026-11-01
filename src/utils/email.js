@@ -13,29 +13,56 @@ const EMAIL_TRANSPORT_READY = Boolean(
 );
 const IS_DEVELOPMENT = NODE_ENV !== "production";
 
-let cachedTransporter = null;
+const cleanUser = String(GMAIL_SMTP_EMAIL || "").trim();
+const cleanPass = String(GMAIL_SMTP_APP_PASSWORD || "").trim().replace(/^["']|["']$/g, "");
+
+function createTransporter(port = 587, secure = false) {
+  return nodemailer.createTransport({
+    host: process.env.SMTP_HOST || "smtp.gmail.com",
+    port: Number(process.env.SMTP_PORT) || port,
+    secure: process.env.SMTP_SECURE ? process.env.SMTP_SECURE === "true" : secure,
+    auth: {
+      user: cleanUser,
+      pass: cleanPass,
+    },
+    family: 4, // Strictly force IPv4 to avoid IPv6 hanging on cloud hosts
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 20000,
+  });
+}
+
+let primaryTransporter = null;
+let fallbackTransporter = null;
+
+function getTransporters() {
+  if (!EMAIL_TRANSPORT_READY) return null;
+  if (!primaryTransporter) {
+    primaryTransporter = createTransporter(587, false);
+    fallbackTransporter = createTransporter(465, true);
+  }
+  return { primaryTransporter, fallbackTransporter };
+}
 
 function getTransporter() {
-  if (!EMAIL_TRANSPORT_READY) {
-    return null;
+  const t = getTransporters();
+  return t ? t.primaryTransporter : null;
+}
+
+async function sendMailWithFailover(mailOptions) {
+  const transporters = getTransporters();
+  if (!transporters) {
+    throw new Error("smtp-not-configured");
   }
 
-  if (!cachedTransporter) {
-    const cleanUser = String(GMAIL_SMTP_EMAIL || "").trim();
-    const cleanPass = String(GMAIL_SMTP_APP_PASSWORD || "").trim().replace(/^["']|["']$/g, "");
-    cachedTransporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: cleanUser,
-        pass: cleanPass,
-      },
-      connectionTimeout: 10000,
-      greetingTimeout: 10000,
-      socketTimeout: 15000,
+  try {
+    return await transporters.primaryTransporter.sendMail(mailOptions);
+  } catch (primaryErr) {
+    logger.warn("Primary SMTP on port 587 failed, attempting fallback on port 465", {
+      error: primaryErr.message,
     });
+    return await transporters.fallbackTransporter.sendMail(mailOptions);
   }
-
-  return cachedTransporter;
 }
 
 async function sendPasswordResetEmail(to, resetUrl) {
@@ -52,7 +79,7 @@ async function sendPasswordResetEmail(to, resetUrl) {
   }
 
   try {
-    await transporter.sendMail({
+    await sendMailWithFailover({
       from: PASSWORD_RESET_FROM_EMAIL || GMAIL_SMTP_EMAIL,
       to,
       subject: "Sauda Book Password Reset",
@@ -346,7 +373,7 @@ If you did not request this verification code, please ignore this email.
   `;
 
   try {
-    const info = await transporter.sendMail({
+    const info = await sendMailWithFailover({
       from: fromAddress,
       to: cleanTo,
       replyTo: GMAIL_SMTP_EMAIL ? String(GMAIL_SMTP_EMAIL).trim() : undefined,
