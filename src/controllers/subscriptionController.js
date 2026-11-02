@@ -946,6 +946,20 @@ const getInAppReminders = asyncHandler(async (req, res) => {
     });
   }
 
+  // 5. Unverified email reminder
+  if (!user.isEmailVerified) {
+    reminders.push({
+      id: 'unverified-email',
+      type: 'WARNING',
+      category: 'SECURITY',
+      title: 'Email Verification Recommended',
+      message: 'Your email address is unverified. Verify your email to secure your account and receive monthly ledger backup statements.',
+      actionLabel: 'Verify Email',
+      actionUrl: '/profile',
+      createdAt: new Date().toISOString(),
+    });
+  }
+
   return res.json({
     reminders,
     unreadCount: reminders.filter((r) => r.type === "URGENT" || r.type === "WARNING" || r.type === "OFFER").length,

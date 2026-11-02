@@ -31,6 +31,8 @@ async function authMiddleware(req, res, next) {
         businessSubtitle: true,
         contactPhone: true,
         businessAddress: true,
+        isEmailVerified: true,
+        isPhoneVerified: true,
         subscriptionPlan: true,
         billingCycle: true,
         subscriptionStatus: true,
