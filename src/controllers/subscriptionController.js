@@ -228,6 +228,27 @@ const createSubscriptionOrder = asyncHandler(async (req, res) => {
     if (!appliedCoupon) {
       throw new AppError(`Coupon code "${normalizedCode}" is invalid.`, 400);
     }
+
+    // Enforce plan-specific restriction
+    if (appliedCoupon.applicablePlan && appliedCoupon.applicablePlan !== "ALL") {
+      if (appliedCoupon.applicablePlan.toUpperCase() !== normalizedPlan) {
+        throw new AppError(
+          `This voucher is valid exclusively for the ${appliedCoupon.applicablePlan} plan.`,
+          400
+        );
+      }
+    }
+
+    // Enforce billing-cycle restriction
+    if (appliedCoupon.applicableCycle && appliedCoupon.applicableCycle !== "ALL") {
+      if (appliedCoupon.applicableCycle.toUpperCase() !== normalizedCycle) {
+        throw new AppError(
+          `This voucher is valid exclusively for ${appliedCoupon.applicableCycle} billing.`,
+          400
+        );
+      }
+    }
+
     await checkCouponPerUserLimit(appliedCoupon, userId);
     const calc = calculateCouponDiscount(appliedCoupon, preDiscountPayable);
     discountAmount = calc.discount;

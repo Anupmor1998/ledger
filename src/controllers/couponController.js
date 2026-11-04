@@ -116,19 +116,46 @@ const validateCoupon = asyncHandler(async (req, res) => {
 
   const normalizedCode = String(code || "").trim().toUpperCase();
   if (!normalizedCode) {
-    throw new AppError("Please enter a coupon code.", 400);
+    throw new AppError("Please enter a voucher or coupon code.", 400);
   }
 
-  const normalizedPlan = String(plan || "").toUpperCase();
-  const normalizedCycle = String(billingCycle || "MONTHLY").toUpperCase();
+  const coupon = await prisma.coupon.findUnique({
+    where: { code: normalizedCode },
+  });
 
-  const tier = PLAN_PRICING[normalizedPlan];
+  if (!coupon) {
+    throw new AppError(`Voucher code "${normalizedCode}" is invalid.`, 400);
+  }
+
+  // Determine target plan & billing cycle
+  const couponPlan = coupon.applicablePlan && coupon.applicablePlan !== "ALL" ? coupon.applicablePlan.toUpperCase() : null;
+  const couponCycle = coupon.applicableCycle && coupon.applicableCycle !== "ALL" ? coupon.applicableCycle.toUpperCase() : null;
+
+  let effectivePlan = plan ? String(plan).trim().toUpperCase() : (couponPlan || "GROWTH");
+  let effectiveCycle = billingCycle ? String(billingCycle).trim().toUpperCase() : (couponCycle || "MONTHLY");
+
+  // Validate restrictions
+  if (couponPlan) {
+    if (plan && plan.toUpperCase() !== couponPlan) {
+      throw new AppError(`This voucher is valid exclusively for the ${couponPlan} plan.`, 400);
+    }
+    effectivePlan = couponPlan;
+  }
+
+  if (couponCycle) {
+    if (billingCycle && billingCycle.toUpperCase() !== couponCycle) {
+      throw new AppError(`This voucher is valid exclusively for ${couponCycle} billing.`, 400);
+    }
+    effectiveCycle = couponCycle;
+  }
+
+  const tier = PLAN_PRICING[effectivePlan];
   if (!tier) {
-    throw new AppError(`Invalid plan tier: ${plan}`, 400);
+    throw new AppError(`Invalid plan tier: ${effectivePlan}`, 400);
   }
 
-  if (!["MONTHLY", "YEARLY"].includes(normalizedCycle)) {
-    throw new AppError(`Invalid billing cycle: ${billingCycle}`, 400);
+  if (!["MONTHLY", "YEARLY"].includes(effectiveCycle)) {
+    throw new AppError(`Invalid billing cycle: ${effectiveCycle}`, 400);
   }
 
   const user = await prisma.user.findUnique({
@@ -141,18 +168,10 @@ const validateCoupon = asyncHandler(async (req, res) => {
   });
 
   const { unusedCredit, remainingDays, isUpgrade, previousPlan } =
-    calculateProrationCredit(user, normalizedPlan, normalizedCycle);
+    calculateProrationCredit(user, effectivePlan, effectiveCycle);
 
-  const basePrice = normalizedCycle === "YEARLY" ? tier.yearly : tier.monthly;
+  const basePrice = effectiveCycle === "YEARLY" ? tier.yearly : tier.monthly;
   const preDiscountPayable = Math.max(0, basePrice - unusedCredit);
-
-  const coupon = await prisma.coupon.findUnique({
-    where: { code: normalizedCode },
-  });
-
-  if (!coupon) {
-    throw new AppError(`Coupon code "${normalizedCode}" is invalid.`, 400);
-  }
 
   // Check per-user limit based on completed SUCCESS payments
   await checkCouponPerUserLimit(coupon, userId);
@@ -169,7 +188,12 @@ const validateCoupon = asyncHandler(async (req, res) => {
       discountValue: coupon.discountValue,
       maxUsesPerUser: coupon.maxUsesPerUser,
       expiresAt: coupon.expiresAt,
+      applicablePlan: coupon.applicablePlan || "ALL",
+      applicableCycle: coupon.applicableCycle || "ALL",
+      showBanner: coupon.showBanner,
     },
+    targetPlan: effectivePlan,
+    targetCycle: effectiveCycle,
     basePrice,
     unusedCredit,
     remainingDays,
@@ -177,6 +201,7 @@ const validateCoupon = asyncHandler(async (req, res) => {
     previousPlan,
     discountAmount: discount,
     finalPrice,
+    isFree: finalPrice === 0,
   });
 });
 
@@ -403,6 +428,8 @@ const createCoupon = asyncHandler(async (req, res) => {
     bannerBadge,
     expiresAt,
     isActive = true,
+    applicablePlan = "ALL",
+    applicableCycle = "ALL",
   } = req.body;
 
   const normalizedCode = String(code || "").trim().toUpperCase();
@@ -457,6 +484,8 @@ const createCoupon = asyncHandler(async (req, res) => {
       bannerHeadline: bannerHeadline ? String(bannerHeadline).trim() : null,
       bannerSubtitle: bannerSubtitle ? String(bannerSubtitle).trim() : null,
       bannerBadge: bannerBadge ? String(bannerBadge).trim() : null,
+      applicablePlan: applicablePlan ? String(applicablePlan).trim().toUpperCase() : "ALL",
+      applicableCycle: applicableCycle ? String(applicableCycle).trim().toUpperCase() : "ALL",
       createdById: req.user.userId,
     },
   });
@@ -505,6 +534,8 @@ const generateCouponBatch = asyncHandler(async (req, res) => {
     maxUsesPerUser = 1,
     isPublic = false,
     expiresAt,
+    applicablePlan = "ALL",
+    applicableCycle = "ALL",
   } = req.body;
 
   const totalCount = Math.min(200, Math.max(1, parseInt(count, 10) || 5));
@@ -555,6 +586,8 @@ const generateCouponBatch = asyncHandler(async (req, res) => {
     expiresAt: parsedExpiresAt,
     isActive: true,
     isPublic: Boolean(isPublic),
+    applicablePlan: applicablePlan ? String(applicablePlan).trim().toUpperCase() : "ALL",
+    applicableCycle: applicableCycle ? String(applicableCycle).trim().toUpperCase() : "ALL",
     createdById: req.user.userId,
   }));
 
@@ -596,6 +629,8 @@ const updateCoupon = asyncHandler(async (req, res) => {
     bannerHeadline,
     bannerSubtitle,
     bannerBadge,
+    applicablePlan,
+    applicableCycle,
   } = req.body;
 
   const coupon = await prisma.coupon.findUnique({
@@ -634,6 +669,14 @@ const updateCoupon = asyncHandler(async (req, res) => {
 
   if (bannerBadge !== undefined) {
     data.bannerBadge = bannerBadge ? String(bannerBadge).trim() : null;
+  }
+
+  if (applicablePlan !== undefined) {
+    data.applicablePlan = applicablePlan ? String(applicablePlan).trim().toUpperCase() : "ALL";
+  }
+
+  if (applicableCycle !== undefined) {
+    data.applicableCycle = applicableCycle ? String(applicableCycle).trim().toUpperCase() : "ALL";
   }
 
   if (expiresAt !== undefined) {

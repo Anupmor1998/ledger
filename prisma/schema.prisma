@@ -558,6 +558,8 @@ model Coupon {
   expiresAt      DateTime?
   isActive       Boolean            @default(true)
   isPublic       Boolean            @default(false)
+  applicablePlan String?            @default("ALL")
+  applicableCycle String?           @default("ALL")
   showBanner     Boolean            @default(false)
   bannerTheme    String?            @default("EMERALD")
   bannerHeadline String?
@@ -571,6 +573,8 @@ model Coupon {
   @@index([code])
   @@index([isActive])
   @@index([isPublic])
+  @@index([applicablePlan])
+  @@index([applicableCycle])
   @@index([showBanner])
   @@index([expiresAt])
 }
