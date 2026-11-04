@@ -11,7 +11,7 @@ const logger = require("../utils/logger");
 const { sendSubscriptionInvoicePdf } = require("../utils/invoicePdf");
 const { getSubscriptionDetails } = require("../middlewares/subscriptionGatingMiddleware");
 
-const { PLAN_PRICING, calculateProrationCredit } = require("../utils/subscriptionPricing");
+const { PLAN_PRICING, calculateProrationCredit, checkSubscriptionCompatibility } = require("../utils/subscriptionPricing");
 const { calculateCouponDiscount, checkCouponPerUserLimit } = require("./couponController");
 
 /**
@@ -139,26 +139,36 @@ const previewSubscriptionOrder = asyncHandler(async (req, res) => {
 
   let discountAmount = 0;
   let appliedCoupon = null;
+  let couponRecord = null;
 
   if (couponCode) {
     const normalizedCode = String(couponCode).trim().toUpperCase();
-    const coupon = await prisma.coupon.findUnique({
+    couponRecord = await prisma.coupon.findUnique({
       where: { code: normalizedCode },
     });
-    if (!coupon) {
+    if (!couponRecord) {
       throw new AppError(`Coupon code "${normalizedCode}" is invalid.`, 400);
     }
-    await checkCouponPerUserLimit(coupon, userId);
-    const calc = calculateCouponDiscount(coupon, preDiscountPayable);
+    await checkCouponPerUserLimit(couponRecord, userId);
+    const calc = calculateCouponDiscount(couponRecord, preDiscountPayable);
     discountAmount = calc.discount;
     appliedCoupon = {
-      id: coupon.id,
-      code: coupon.code,
-      description: coupon.description,
-      discountType: coupon.discountType,
-      discountValue: coupon.discountValue,
-      expiresAt: coupon.expiresAt,
+      id: couponRecord.id,
+      code: couponRecord.code,
+      description: couponRecord.description,
+      discountType: couponRecord.discountType,
+      discountValue: couponRecord.discountValue,
+      expiresAt: couponRecord.expiresAt,
+      applicablePlan: couponRecord.applicablePlan || "ALL",
+      applicableCycle: couponRecord.applicableCycle || "ALL",
+      targetAudience: couponRecord.targetAudience || "ALL",
     };
+  }
+
+  // Compatibility & downgrade/eligibility checks
+  const compat = checkSubscriptionCompatibility(user, normalizedPlan, normalizedCycle, couponRecord);
+  if (!compat.allowed) {
+    throw new AppError(compat.message, 400);
   }
 
   const finalPrice = Math.max(0, preDiscountPayable - discountAmount);
@@ -170,6 +180,10 @@ const previewSubscriptionOrder = asyncHandler(async (req, res) => {
     unusedCredit,
     remainingDays,
     isUpgrade,
+    isExtension: compat.isExtension,
+    currentExpiry: compat.currentExpiry,
+    extendedExpiry: compat.extendedExpiry,
+    extensionDays: compat.extensionDays,
     previousPlan,
     discountAmount,
     coupon: appliedCoupon,
@@ -254,6 +268,12 @@ const createSubscriptionOrder = asyncHandler(async (req, res) => {
     discountAmount = calc.discount;
   }
 
+  // Compatibility & downgrade/eligibility checks
+  const compat = checkSubscriptionCompatibility(user, normalizedPlan, normalizedCycle, appliedCoupon);
+  if (!compat.allowed) {
+    throw new AppError(compat.message, 400);
+  }
+
   const finalAmountInRupees = Math.max(0, preDiscountPayable - discountAmount);
 
   // If 100% discount, bypass payment gateway directly
@@ -262,11 +282,9 @@ const createSubscriptionOrder = asyncHandler(async (req, res) => {
     const isYearly = normalizedCycle === "YEARLY";
     const daysToAdd = isYearly ? 365 : 30;
     let newExpiresAt;
-    const isSamePlanRenewal =
-      user?.subscriptionPlan === normalizedPlan &&
-      user?.billingCycle === normalizedCycle;
+    const isSamePlan = user?.subscriptionPlan === normalizedPlan;
 
-    if (isSamePlanRenewal && user?.planExpiresAt && new Date(user.planExpiresAt) > now) {
+    if (isSamePlan && user?.planExpiresAt && new Date(user.planExpiresAt) > now) {
       newExpiresAt = new Date(new Date(user.planExpiresAt).getTime() + daysToAdd * 24 * 60 * 60 * 1000);
     } else {
       newExpiresAt = new Date(now.getTime() + daysToAdd * 24 * 60 * 60 * 1000);
@@ -474,12 +492,10 @@ async function processSuccessfulSubscriptionPayment({ paymentRecord, razorpayPay
   const now = new Date();
 
   let newExpiresAt;
-  const isSamePlanRenewal =
-    user?.subscriptionPlan === paymentRecord.plan &&
-    user?.billingCycle === paymentRecord.billingCycle;
+  const isSamePlan = user?.subscriptionPlan === paymentRecord.plan;
 
-  if (isSamePlanRenewal && user?.planExpiresAt && new Date(user.planExpiresAt) > now) {
-    // Standard renewal: extend from existing expiry date
+  if (isSamePlan && user?.planExpiresAt && new Date(user.planExpiresAt) > now) {
+    // Standard renewal or cycle switch: extend from existing expiry date
     newExpiresAt = new Date(new Date(user.planExpiresAt).getTime() + daysToAdd * 24 * 60 * 60 * 1000);
   } else {
     // Upgraded or expired: fresh 30 or 365 days start from today

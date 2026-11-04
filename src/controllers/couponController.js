@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const prisma = require("../config/prisma");
 const AppError = require("../utils/appError");
 const asyncHandler = require("../utils/asyncHandler");
-const { PLAN_PRICING, calculateProrationCredit } = require("../utils/subscriptionPricing");
+const { PLAN_PRICING, calculateProrationCredit, checkSubscriptionCompatibility } = require("../utils/subscriptionPricing");
 const { broadcastPushNotification } = require("../utils/pushNotifications");
 
 /**
@@ -167,6 +167,12 @@ const validateCoupon = asyncHandler(async (req, res) => {
     },
   });
 
+  // Subscription compatibility check: Downgrade prevention, Target audience eligibility, Extension calculation
+  const compat = checkSubscriptionCompatibility(user, effectivePlan, effectiveCycle, coupon);
+  if (!compat.allowed) {
+    throw new AppError(compat.message, 400);
+  }
+
   const { unusedCredit, remainingDays, isUpgrade, previousPlan } =
     calculateProrationCredit(user, effectivePlan, effectiveCycle);
 
@@ -190,6 +196,7 @@ const validateCoupon = asyncHandler(async (req, res) => {
       expiresAt: coupon.expiresAt,
       applicablePlan: coupon.applicablePlan || "ALL",
       applicableCycle: coupon.applicableCycle || "ALL",
+      targetAudience: coupon.targetAudience || "ALL",
       showBanner: coupon.showBanner,
     },
     targetPlan: effectivePlan,
@@ -198,6 +205,10 @@ const validateCoupon = asyncHandler(async (req, res) => {
     unusedCredit,
     remainingDays,
     isUpgrade,
+    isExtension: compat.isExtension,
+    currentExpiry: compat.currentExpiry,
+    extendedExpiry: compat.extendedExpiry,
+    extensionDays: compat.extensionDays,
     previousPlan,
     discountAmount: discount,
     finalPrice,
@@ -430,6 +441,7 @@ const createCoupon = asyncHandler(async (req, res) => {
     isActive = true,
     applicablePlan = "ALL",
     applicableCycle = "ALL",
+    targetAudience = "ALL",
   } = req.body;
 
   const normalizedCode = String(code || "").trim().toUpperCase();
@@ -486,6 +498,7 @@ const createCoupon = asyncHandler(async (req, res) => {
       bannerBadge: bannerBadge ? String(bannerBadge).trim() : null,
       applicablePlan: applicablePlan ? String(applicablePlan).trim().toUpperCase() : "ALL",
       applicableCycle: applicableCycle ? String(applicableCycle).trim().toUpperCase() : "ALL",
+      targetAudience: targetAudience && String(targetAudience).trim().toUpperCase() === "NEW_OR_EXPIRED_ONLY" ? "NEW_OR_EXPIRED_ONLY" : "ALL",
       createdById: req.user.userId,
     },
   });
@@ -536,6 +549,7 @@ const generateCouponBatch = asyncHandler(async (req, res) => {
     expiresAt,
     applicablePlan = "ALL",
     applicableCycle = "ALL",
+    targetAudience = "ALL",
   } = req.body;
 
   const totalCount = Math.min(200, Math.max(1, parseInt(count, 10) || 5));
@@ -588,6 +602,7 @@ const generateCouponBatch = asyncHandler(async (req, res) => {
     isPublic: Boolean(isPublic),
     applicablePlan: applicablePlan ? String(applicablePlan).trim().toUpperCase() : "ALL",
     applicableCycle: applicableCycle ? String(applicableCycle).trim().toUpperCase() : "ALL",
+    targetAudience: targetAudience && String(targetAudience).trim().toUpperCase() === "NEW_OR_EXPIRED_ONLY" ? "NEW_OR_EXPIRED_ONLY" : "ALL",
     createdById: req.user.userId,
   }));
 
@@ -631,6 +646,7 @@ const updateCoupon = asyncHandler(async (req, res) => {
     bannerBadge,
     applicablePlan,
     applicableCycle,
+    targetAudience,
   } = req.body;
 
   const coupon = await prisma.coupon.findUnique({
@@ -677,6 +693,10 @@ const updateCoupon = asyncHandler(async (req, res) => {
 
   if (applicableCycle !== undefined) {
     data.applicableCycle = applicableCycle ? String(applicableCycle).trim().toUpperCase() : "ALL";
+  }
+
+  if (targetAudience !== undefined) {
+    data.targetAudience = targetAudience && String(targetAudience).trim().toUpperCase() === "NEW_OR_EXPIRED_ONLY" ? "NEW_OR_EXPIRED_ONLY" : "ALL";
   }
 
   if (expiresAt !== undefined) {
