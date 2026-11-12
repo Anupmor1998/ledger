@@ -71,6 +71,7 @@ const getEligibleOrders = asyncHandler(async (req, res) => {
       quality: true,
       paymentOrderAllocations: {
         select: {
+          paymentEntryId: true,
           allocatedAmount: true,
           isSettled: true,
         },
@@ -79,16 +80,23 @@ const getEligibleOrders = asyncHandler(async (req, res) => {
     orderBy: [{ orderDate: "asc" }, { orderNo: "asc" }],
   });
 
+  const excludeEntryId = req.query.excludePaymentEntryId || null;
+
   const formattedOrders = orders.map((order) => {
     const commissionAmount = computeOrderFullCommission(order, order.customer);
+    const relevantAllocations = excludeEntryId
+      ? order.paymentOrderAllocations.filter(
+          (alloc) => alloc.paymentEntryId !== excludeEntryId,
+        )
+      : order.paymentOrderAllocations;
     const totalAllocated = round2(
-      order.paymentOrderAllocations.reduce(
+      relevantAllocations.reduce(
         (sum, alloc) => sum + Number(alloc.allocatedAmount || 0),
         0,
       ),
     );
     const isSettled =
-      order.paymentOrderAllocations.some((alloc) => alloc.isSettled) ||
+      relevantAllocations.some((alloc) => alloc.isSettled) ||
       (commissionAmount > 0 && totalAllocated >= commissionAmount);
     const remainingAmount = isSettled
       ? 0
@@ -148,6 +156,7 @@ const createPaymentEntry = asyncHandler(async (req, res) => {
     orderDateFrom,
     orderDateTo,
     selectedOrderIds = [],
+    orderAllocations = [],
   } = req.body;
 
   if (isManufacturer) {
@@ -258,9 +267,16 @@ const createPaymentEntry = asyncHandler(async (req, res) => {
     return res.status(201).json(fullRecord);
   }
 
+  const effectiveSelectedOrderIds =
+    Array.isArray(selectedOrderIds) && selectedOrderIds.length > 0
+      ? selectedOrderIds
+      : Array.isArray(orderAllocations) && orderAllocations.length > 0
+      ? orderAllocations.map((a) => a.orderId)
+      : [];
+
   let ordersToAllocate = [];
   if (adjustedAgainst === "ORDER_ID") {
-    if (!Array.isArray(selectedOrderIds) || selectedOrderIds.length === 0) {
+    if (effectiveSelectedOrderIds.length === 0) {
       throw new AppError(
         "At least one order must be selected for ORDER_ID adjustment",
         400,
@@ -269,7 +285,7 @@ const createPaymentEntry = asyncHandler(async (req, res) => {
 
     ordersToAllocate = await prisma.order.findMany({
       where: {
-        id: { in: selectedOrderIds },
+        id: { in: effectiveSelectedOrderIds },
         userId,
         customerId,
         status: { not: "CANCELLED" },
@@ -286,7 +302,7 @@ const createPaymentEntry = asyncHandler(async (req, res) => {
       orderBy: [{ orderDate: "asc" }, { orderNo: "asc" }],
     });
 
-    if (ordersToAllocate.length !== selectedOrderIds.length) {
+    if (ordersToAllocate.length !== effectiveSelectedOrderIds.length) {
       throw new AppError(
         "One or more selected orders are invalid or do not belong to this customer",
         400,
@@ -435,39 +451,28 @@ const createPaymentEntry = asyncHandler(async (req, res) => {
       );
     }
 
-    // Allocate sequentially if ORDER_ID
+    // Allocate if ORDER_ID
     if (adjustedAgainst === "ORDER_ID" && ordersToAllocate.length > 0) {
-      let remainingPayment = numericAmount;
       let allSettled = true;
 
-      for (let i = 0; i < ordersToAllocate.length; i += 1) {
-        const ord = ordersToAllocate[i];
-        const isLastOrder = i === ordersToAllocate.length - 1;
+      if (Array.isArray(orderAllocations) && orderAllocations.length > 0) {
+        for (const item of orderAllocations) {
+          const ord = ordersToAllocate.find((o) => o.id === item.orderId);
+          if (!ord) continue;
 
-        const commissionAmount = computeOrderFullCommission(ord, ord.customer);
-        const prevAllocated = round2(
-          ord.paymentOrderAllocations.reduce(
-            (sum, alloc) => sum + Number(alloc.allocatedAmount || 0),
-            0,
-          ),
-        );
-        const remainingDue = Math.max(
-          0,
-          round2(commissionAmount - prevAllocated),
-        );
+          const allocationForThisOrder = round2(item.allocatedAmount);
+          if (allocationForThisOrder <= 0) continue;
 
-        if (remainingPayment <= 0 && !isLastOrder) {
-          allSettled = false;
-          break;
-        }
-
-        let allocationForThisOrder = isLastOrder
-          ? round2(remainingPayment)
-          : round2(Math.min(remainingPayment, remainingDue));
-
-        if (allocationForThisOrder > 0) {
+          const commissionAmount = computeOrderFullCommission(ord, ord.customer);
+          const prevAllocated = round2(
+            ord.paymentOrderAllocations.reduce(
+              (sum, alloc) => sum + Number(alloc.allocatedAmount || 0),
+              0,
+            ),
+          );
           const totalAfter = round2(prevAllocated + allocationForThisOrder);
-          const isSettled = isLastOrder || totalAfter >= commissionAmount;
+          const isSettled = Boolean(item.isSettled) || totalAfter >= commissionAmount;
+
           if (!isSettled) {
             allSettled = false;
           }
@@ -481,10 +486,55 @@ const createPaymentEntry = asyncHandler(async (req, res) => {
               isSettled,
             },
           });
+        }
+      } else {
+        let remainingPayment = numericAmount;
 
-          remainingPayment = round2(
-            Math.max(0, remainingPayment - allocationForThisOrder),
+        for (let i = 0; i < ordersToAllocate.length; i += 1) {
+          const ord = ordersToAllocate[i];
+
+          const commissionAmount = computeOrderFullCommission(ord, ord.customer);
+          const prevAllocated = round2(
+            ord.paymentOrderAllocations.reduce(
+              (sum, alloc) => sum + Number(alloc.allocatedAmount || 0),
+              0,
+            ),
           );
+          const remainingDue = Math.max(
+            0,
+            round2(commissionAmount - prevAllocated),
+          );
+
+          if (remainingPayment <= 0) {
+            allSettled = false;
+            break;
+          }
+
+          const allocationForThisOrder = round2(
+            Math.min(remainingPayment, remainingDue),
+          );
+
+          if (allocationForThisOrder > 0) {
+            const totalAfter = round2(prevAllocated + allocationForThisOrder);
+            const isSettled = totalAfter >= commissionAmount;
+            if (!isSettled) {
+              allSettled = false;
+            }
+
+            await tx.paymentOrderAllocation.create({
+              data: {
+                userId,
+                paymentEntryId: created.id,
+                orderId: ord.id,
+                allocatedAmount: allocationForThisOrder,
+                isSettled,
+              },
+            });
+
+            remainingPayment = round2(
+              Math.max(0, remainingPayment - allocationForThisOrder),
+            );
+          }
         }
       }
 
@@ -851,6 +901,285 @@ const settlePartialAccount = asyncHandler(async (req, res) => {
   });
 });
 
+const updatePaymentEntry = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+  const { id } = req.params;
+
+  const existing = await prisma.paymentEntry.findFirst({
+    where: { id, userId },
+    include: {
+      allocations: true,
+    },
+  });
+
+  if (!existing) {
+    throw new AppError("Payment entry not found", 404);
+  }
+
+  const partyType = String(req.body.partyType || existing.partyType || "CUSTOMER").toUpperCase();
+  const isManufacturer = partyType === "MANUFACTURER";
+
+  const {
+    customerId,
+    manufacturerId,
+    date,
+    paymentMode,
+    amount,
+    remark,
+    adjustedAgainst = existing.adjustedAgainst || "ORDER_ID",
+    orderDateFrom,
+    orderDateTo,
+    selectedOrderIds = [],
+    orderAllocations = [],
+  } = req.body;
+
+  if (isManufacturer) {
+    const targetMfrId = manufacturerId || existing.manufacturerId;
+    if (!targetMfrId) {
+      throw new AppError("Manufacturer is required", 400);
+    }
+  } else {
+    const targetCustId = customerId || existing.customerId;
+    if (!targetCustId) {
+      throw new AppError("Customer is required", 400);
+    }
+  }
+
+  const numericAmount = round2(amount !== undefined ? amount : existing.amount);
+  if (numericAmount <= 0) {
+    throw new AppError("Amount must be greater than 0", 400);
+  }
+
+  const targetDate = date ? new Date(date) : existing.date;
+  if (Number.isNaN(targetDate.getTime())) {
+    throw new AppError("Invalid payment date", 400);
+  }
+
+  const targetMode = paymentMode || existing.paymentMode;
+  const validModes = ["CASH", "CHEQUE", "ONLINE", "UPI"];
+  if (!validModes.includes(targetMode)) {
+    throw new AppError(`Payment mode must be one of: ${validModes.join(", ")}`, 400);
+  }
+
+  // Execute update in a transaction
+  const updatedEntry = await prisma.$transaction(async (tx) => {
+    // 1. If manufacturer
+    if (isManufacturer) {
+      return await tx.paymentEntry.update({
+        where: { id: existing.id },
+        data: {
+          manufacturerId: manufacturerId || existing.manufacturerId,
+          date: targetDate,
+          paymentMode: targetMode,
+          amount: numericAmount,
+          remark: remark !== undefined ? (remark ? String(remark).trim() : null) : existing.remark,
+        },
+      });
+    }
+
+    // 2. If customer
+    const targetCustId = customerId || existing.customerId;
+
+    let fromDate = null;
+    let toDate = null;
+    if (orderDateFrom) {
+      fromDate = new Date(orderDateFrom);
+      if (Number.isNaN(fromDate.getTime())) fromDate = null;
+      else fromDate.setHours(0, 0, 0, 0);
+    } else if (existing.orderDateFrom) {
+      fromDate = existing.orderDateFrom;
+    }
+    if (orderDateTo) {
+      toDate = new Date(orderDateTo);
+      if (Number.isNaN(toDate.getTime())) toDate = null;
+      else toDate.setHours(23, 59, 59, 999);
+    } else if (existing.orderDateTo) {
+      toDate = existing.orderDateTo;
+    }
+
+    if (adjustedAgainst === "ORDER_ID") {
+      const effectiveOrderIds =
+        Array.isArray(selectedOrderIds) && selectedOrderIds.length > 0
+          ? selectedOrderIds
+          : Array.isArray(orderAllocations) && orderAllocations.length > 0
+          ? orderAllocations.map((a) => a.orderId)
+          : existing.allocations.map((a) => a.orderId);
+
+      if (effectiveOrderIds.length === 0) {
+        throw new AppError("At least one order must be selected for ORDER_ID adjustment", 400);
+      }
+
+      // Fetch the orders
+      const ordersToAllocate = await tx.order.findMany({
+        where: {
+          id: { in: effectiveOrderIds },
+          userId,
+          customerId: targetCustId,
+          status: { not: "CANCELLED" },
+        },
+        include: {
+          customer: true,
+          paymentOrderAllocations: {
+            select: {
+              id: true,
+              paymentEntryId: true,
+              allocatedAmount: true,
+              isSettled: true,
+            },
+          },
+        },
+        orderBy: [{ orderDate: "asc" }, { orderNo: "asc" }],
+      });
+
+      // Verify none are settled by ANOTHER payment entry
+      const settledByOtherOrder = ordersToAllocate.find((ord) =>
+        ord.paymentOrderAllocations.some((a) => a.isSettled && a.paymentEntryId !== existing.id)
+      );
+      if (settledByOtherOrder) {
+        throw new AppError(
+          `Order #${settledByOtherOrder.orderNo} is already settled by another payment entry.`,
+          400
+        );
+      }
+
+      // Remove previous allocations for this entry
+      await tx.paymentOrderAllocation.deleteMany({
+        where: { paymentEntryId: existing.id },
+      });
+
+      // Re-create allocations
+      let allSettled = true;
+      if (Array.isArray(orderAllocations) && orderAllocations.length > 0) {
+        for (const item of orderAllocations) {
+          const ord = ordersToAllocate.find((o) => o.id === item.orderId);
+          if (!ord) continue;
+
+          const allocationForThisOrder = round2(item.allocatedAmount);
+          if (allocationForThisOrder <= 0) continue;
+
+          const commissionAmount = computeOrderFullCommission(ord, ord.customer);
+          const prevAllocated = round2(
+            ord.paymentOrderAllocations
+              .filter((a) => a.paymentEntryId !== existing.id)
+              .reduce((sum, a) => sum + Number(a.allocatedAmount || 0), 0)
+          );
+          const totalAfter = round2(prevAllocated + allocationForThisOrder);
+          const isSettled = Boolean(item.isSettled) || totalAfter >= commissionAmount;
+
+          if (!isSettled) {
+            allSettled = false;
+          }
+
+          await tx.paymentOrderAllocation.create({
+            data: {
+              userId,
+              paymentEntryId: existing.id,
+              orderId: ord.id,
+              allocatedAmount: allocationForThisOrder,
+              isSettled,
+            },
+          });
+        }
+      } else {
+        // Sequential fallback
+        let remainingPayment = numericAmount;
+        for (let i = 0; i < ordersToAllocate.length; i += 1) {
+          const ord = ordersToAllocate[i];
+          const commissionAmount = computeOrderFullCommission(ord, ord.customer);
+          const prevAllocated = round2(
+            ord.paymentOrderAllocations
+              .filter((a) => a.paymentEntryId !== existing.id)
+              .reduce((sum, a) => sum + Number(a.allocatedAmount || 0), 0)
+          );
+          const remainingDue = Math.max(0, round2(commissionAmount - prevAllocated));
+          if (remainingPayment <= 0) {
+            allSettled = false;
+            break;
+          }
+          const allocationForThisOrder = round2(Math.min(remainingPayment, remainingDue));
+          if (allocationForThisOrder > 0) {
+            const totalAfter = round2(prevAllocated + allocationForThisOrder);
+            const isSettled = totalAfter >= commissionAmount;
+            if (!isSettled) allSettled = false;
+
+            await tx.paymentOrderAllocation.create({
+              data: {
+                userId,
+                paymentEntryId: existing.id,
+                orderId: ord.id,
+                allocatedAmount: allocationForThisOrder,
+                isSettled,
+              },
+            });
+            remainingPayment = round2(Math.max(0, remainingPayment - allocationForThisOrder));
+          }
+        }
+      }
+
+      return await tx.paymentEntry.update({
+        where: { id: existing.id },
+        data: {
+          customerId: targetCustId,
+          date: targetDate,
+          paymentMode: targetMode,
+          amount: numericAmount,
+          remark: remark !== undefined ? (remark ? String(remark).trim() : null) : existing.remark,
+          adjustedAgainst: "ORDER_ID",
+          orderDateFrom: fromDate,
+          orderDateTo: toDate,
+          isFullySettled: allSettled,
+          finalSettledAmount: allSettled ? numericAmount : null,
+          settledAt: allSettled ? new Date() : null,
+        },
+      });
+    } else {
+      // PARTIAL / On-account adjustment
+      return await tx.paymentEntry.update({
+        where: { id: existing.id },
+        data: {
+          customerId: targetCustId,
+          date: targetDate,
+          paymentMode: targetMode,
+          amount: numericAmount,
+          remark: remark !== undefined ? (remark ? String(remark).trim() : null) : existing.remark,
+          adjustedAgainst: "PARTIAL",
+          orderDateFrom: fromDate,
+          orderDateTo: toDate,
+        },
+      });
+    }
+  });
+
+  const fullRecord = await prisma.paymentEntry.findUnique({
+    where: { id: updatedEntry.id },
+    include: {
+      customer: {
+        select: { id: true, firmName: true, name: true, phone: true },
+      },
+      manufacturer: {
+        select: { id: true, firmName: true, name: true, phone: true },
+      },
+      allocations: {
+        include: {
+          order: {
+            select: {
+              id: true,
+              orderNo: true,
+              commissionAmount: true,
+              orderDate: true,
+              manufacturer: {
+                select: { firmName: true, name: true },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  return res.json(fullRecord);
+});
+
 const deletePaymentEntry = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
   const { id } = req.params;
@@ -975,6 +1304,7 @@ module.exports = {
   getNextSerialNo,
   getEligibleOrders,
   createPaymentEntry,
+  updatePaymentEntry,
   listPaymentEntries,
   getPaymentEntryById,
   settlePartialAccount,

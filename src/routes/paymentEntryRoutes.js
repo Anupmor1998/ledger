@@ -4,6 +4,7 @@ const {
   getNextSerialNo,
   getEligibleOrders,
   createPaymentEntry,
+  updatePaymentEntry,
   listPaymentEntries,
   getPaymentEntryById,
   settlePartialAccount,
@@ -21,6 +22,7 @@ router.get("/manufacturer-summary/:manufacturerId", getManufacturerPaymentSummar
 router.get("/", listPaymentEntries);
 router.get("/:id", getPaymentEntryById);
 router.post("/", createPaymentEntry);
+router.put("/:id", updatePaymentEntry);
 router.post("/:id/settle", settlePartialAccount);
 router.delete("/:id", deletePaymentEntry);
 
