@@ -59,7 +59,7 @@ const getEligibleOrders = asyncHandler(async (req, res) => {
     where: {
       userId,
       customerId,
-      status: { not: "CANCELLED" },
+      status: { notIn: ["CANCELLED", "TRANSFERRED"] },
       orderDate: {
         gte: fromDate,
         lte: toDate,
@@ -288,7 +288,7 @@ const createPaymentEntry = asyncHandler(async (req, res) => {
         id: { in: effectiveSelectedOrderIds },
         userId,
         customerId,
-        status: { not: "CANCELLED" },
+        status: { notIn: ["CANCELLED", "TRANSFERRED"] },
       },
       include: {
         customer: true,
@@ -366,7 +366,7 @@ const createPaymentEntry = asyncHandler(async (req, res) => {
       where: {
         userId,
         customerId,
-        status: { not: "CANCELLED" },
+        status: { notIn: ["CANCELLED", "TRANSFERRED"] },
         orderDate: {
           gte: fromDate,
           lte: toDate,
@@ -799,7 +799,7 @@ const settlePartialAccount = asyncHandler(async (req, res) => {
   const orderWhere = {
     userId,
     customerId: entry.customerId,
-    status: { not: "CANCELLED" },
+    status: { notIn: ["CANCELLED", "TRANSFERRED"] },
   };
 
   if (entry.orderDateFrom || entry.orderDateTo) {
@@ -1015,7 +1015,7 @@ const updatePaymentEntry = asyncHandler(async (req, res) => {
           id: { in: effectiveOrderIds },
           userId,
           customerId: targetCustId,
-          status: { not: "CANCELLED" },
+          status: { notIn: ["CANCELLED", "TRANSFERRED"] },
         },
         include: {
           customer: true,
@@ -1234,7 +1234,7 @@ const getManufacturerPaymentSummary = asyncHandler(async (req, res) => {
     where: {
       userId,
       manufacturerId,
-      status: { not: "CANCELLED" },
+      status: { notIn: ["CANCELLED", "TRANSFERRED"] },
     },
     select: {
       id: true,
