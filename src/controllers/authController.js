@@ -8,6 +8,7 @@ const logger = require("../utils/logger");
 const AppError = require("../utils/appError");
 const asyncHandler = require("../utils/asyncHandler");
 const { getFinancialYearStartYear } = require("../utils/financialYear");
+const { generateCandidateCode } = require("../utils/referralCode");
 
 const SALT_ROUNDS = 10;
 
@@ -68,6 +69,7 @@ function buildSessionUser(user) {
       user.subscriptionPlan === "COMPLIMENTARY" || (user.subscriptionPlan === "PREMIUM" && !user.planExpiresAt)
         ? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString()
         : (user.planExpiresAt || null),
+    referralCode: user.referralCode || null,
     createdAt: user.createdAt,
   };
 }
@@ -90,7 +92,7 @@ function maskEmail(email) {
 }
 
 const signup = asyncHandler(async (req, res) => {
-  const { email, name, password, contactPhone } = req.body;
+  const { email, name, password, contactPhone, referralCode } = req.body;
 
   if (!email || !password) {
     throw new AppError("Email and password are required", 400);
@@ -132,8 +134,53 @@ const signup = asyncHandler(async (req, res) => {
     throw new AppError("This mobile number is already registered with another account. Each account must have a unique mobile number.", 409);
   }
 
+  // 3. Process referral code if provided
+  let referrerUser = null;
+  let trialDays = 14;
+
+  if (referralCode && typeof referralCode === "string" && referralCode.trim()) {
+    const cleanRefCode = referralCode.trim().toUpperCase();
+    const candidateReferrer = await prisma.user.findUnique({
+      where: { referralCode: cleanRefCode },
+      select: {
+        id: true,
+        email: true,
+        contactPhone: true,
+      },
+    });
+
+    if (candidateReferrer) {
+      const isSelf =
+        candidateReferrer.email === normalizedEmail ||
+        (cleanPhone && candidateReferrer.contactPhone === cleanPhone);
+
+      if (!isSelf) {
+        referrerUser = candidateReferrer;
+        trialDays = 29; // Standard 14 days + 15 referral bonus days
+      }
+    }
+  }
+
+  // 4. Generate unique referral code for the new user
+  let newUserReferralCode = null;
+  let attempts = 0;
+  while (!newUserReferralCode && attempts < 10) {
+    attempts++;
+    const testCode = generateCandidateCode(name);
+    const codeTaken = await prisma.user.findUnique({
+      where: { referralCode: testCode },
+      select: { id: true },
+    });
+    if (!codeTaken) {
+      newUserReferralCode = testCode;
+    }
+  }
+  if (!newUserReferralCode) {
+    newUserReferralCode = `SB${Date.now().toString(36).toUpperCase().slice(-6)}`;
+  }
+
   const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
-  const trialEndsAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+  const trialEndsAt = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000);
   const user = await prisma.user.create({
     data: {
       email: normalizedEmail,
@@ -145,6 +192,8 @@ const signup = asyncHandler(async (req, res) => {
       trialEndsAt,
       isEmailVerified: false,
       isPhoneVerified: false,
+      referralCode: newUserReferralCode,
+      referredById: referrerUser ? referrerUser.id : null,
     },
     select: {
       id: true,
@@ -166,12 +215,31 @@ const signup = asyncHandler(async (req, res) => {
       subscriptionStatus: true,
       trialEndsAt: true,
       planExpiresAt: true,
+      referralCode: true,
       createdAt: true,
     },
   });
 
+  // If referred, create initial ReferralRecord
+  if (referrerUser) {
+    await prisma.referralRecord.create({
+      data: {
+        referrerId: referrerUser.id,
+        refereeId: user.id,
+        status: "REGISTERED",
+        rewardDays: 15,
+        rewardGranted: false,
+      },
+    });
+  }
+
   const token = createToken(user);
-  return res.status(201).json({ user: buildSessionUser(user), token });
+  return res.status(201).json({
+    user: buildSessionUser(user),
+    token,
+    referralApplied: Boolean(referrerUser),
+    trialDays,
+  });
 });
 
 const createAdminAccount = asyncHandler(async (req, res) => {

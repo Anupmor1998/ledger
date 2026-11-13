@@ -491,6 +491,94 @@ const createSubscriptionOrder = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Check if the paying user was referred by someone and reward the referrer with +15 days
+ * (subject to 90 days per calendar year cap).
+ */
+async function triggerReferralMilestoneReward(refereeUserId, paidAmount = 0) {
+  try {
+    if (!refereeUserId || Number(paidAmount) <= 0) {
+      return;
+    }
+
+    const referralRecord = await prisma.referralRecord.findUnique({
+      where: { refereeId: refereeUserId },
+      include: {
+        referrer: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            referralDaysEarned: true,
+            referralDaysYear: true,
+            planExpiresAt: true,
+            subscriptionStatus: true,
+          },
+        },
+      },
+    });
+
+    if (!referralRecord || referralRecord.status === "CONVERTED" || referralRecord.rewardGranted) {
+      return;
+    }
+
+    const referrer = referralRecord.referrer;
+    if (!referrer) {
+      return;
+    }
+
+    const currentYear = new Date().getFullYear();
+    const daysEarnedThisYear =
+      referrer.referralDaysYear === currentYear ? (referrer.referralDaysEarned || 0) : 0;
+
+    const maxDaysYear = 90;
+    const daysAvailableCap = Math.max(0, maxDaysYear - daysEarnedThisYear);
+    const rewardDays = Math.min(referralRecord.rewardDays || 15, daysAvailableCap);
+
+    if (rewardDays > 0) {
+      const now = new Date();
+      const currentExpiry = referrer.planExpiresAt ? new Date(referrer.planExpiresAt) : null;
+      const baseDate = currentExpiry && currentExpiry > now ? currentExpiry : now;
+      const newExpiry = new Date(baseDate.getTime() + rewardDays * 24 * 60 * 60 * 1000);
+
+      await prisma.user.update({
+        where: { id: referrer.id },
+        data: {
+          referralDaysEarned: daysEarnedThisYear + rewardDays,
+          referralDaysYear: currentYear,
+          planExpiresAt: newExpiry,
+          subscriptionStatus: "ACTIVE",
+        },
+      });
+
+      logger.info("Granted referral reward days to referrer", {
+        feature: "referral",
+        referrerId: referrer.id,
+        refereeId: refereeUserId,
+        rewardDays,
+        newExpiry,
+        daysEarnedThisYear: daysEarnedThisYear + rewardDays,
+      });
+    }
+
+    // Mark referral record as CONVERTED
+    await prisma.referralRecord.update({
+      where: { id: referralRecord.id },
+      data: {
+        status: "CONVERTED",
+        rewardGranted: rewardDays > 0,
+        rewardGrantedAt: new Date(),
+      },
+    });
+  } catch (err) {
+    logger.error("Error triggering referral milestone reward", {
+      feature: "referral",
+      refereeUserId,
+      error: err.message,
+    });
+  }
+}
+
+/**
  * Common idempotent function to activate or renew subscription upon verified payment
  */
 async function processSuccessfulSubscriptionPayment({ paymentRecord, razorpayPaymentId }) {
@@ -586,6 +674,9 @@ async function processSuccessfulSubscriptionPayment({ paymentRecord, razorpayPay
   }
 
   const [updatedPayment, updatedUser] = await prisma.$transaction(txTasks);
+
+  // Trigger milestone reward (+15 days) for referrer if referee is making their first paid purchase
+  triggerReferralMilestoneReward(paymentRecord.userId, paymentRecord.amount);
 
   logger.info("Subscription payment activated successfully", {
     feature: "subscription",
