@@ -212,8 +212,9 @@ function buildSearchWhere(config, search, searchField) {
 }
 
 function buildOrderBy(config, sortBy, sortOrder) {
-  const allowed = new Set([...(config.sortableFields || []), ...(config.previewFields || []).map((field) => field.value)]);
-  const field = allowed.has(sortBy) ? sortBy : (config.sortableFields || [])[0] || "createdAt";
+  const allowed = new Set(config.sortableFields || []);
+  const defaultSortField = (config.sortableFields || [])[0] || "id";
+  const field = allowed.has(sortBy) ? sortBy : defaultSortField;
   const direction = String(sortOrder || "desc").toLowerCase() === "asc" ? "asc" : "desc";
   return { [field]: direction };
 }
