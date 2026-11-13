@@ -84,6 +84,16 @@ function formatRecordForResponse(item, config) {
       userBillingCycle: stripped.user.billingCycle || "MONTHLY",
     };
   }
+  if (config.key === "paymentEntries") {
+    const partyName =
+      item.partyType === "CUSTOMER"
+        ? (item.customer?.firmName || item.customer?.name || "-")
+        : (item.manufacturer?.firmName || item.manufacturer?.name || "-");
+    return {
+      ...stripped,
+      partyName,
+    };
+  }
   if (config.key === "users") {
     const sub = getSubscriptionDetails(stripped);
     const effectiveExpiresAt =
@@ -238,6 +248,14 @@ const listCollectionRecords = asyncHandler(async (req, res) => {
   }
 
   const where = buildSearchWhere(config, search, searchField);
+  const filterUserId = String(req.query.userId || "").trim();
+  if (filterUserId) {
+    if (config.key === "users") {
+      where.id = filterUserId;
+    } else {
+      where.userId = filterUserId;
+    }
+  }
   const findOptions = {
     where,
     orderBy: buildOrderBy(config, sortBy, sortOrder),
@@ -558,6 +576,24 @@ const toggleUserFreeAccess = asyncHandler(async (req, res) => {
   });
 });
 
+const listUsersForSelector = asyncHandler(async (_req, res) => {
+  const users = await prisma.user.findMany({
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      firmName: true,
+      contactPhone: true,
+      subscriptionPlan: true,
+      subscriptionStatus: true,
+    },
+    orderBy: {
+      name: "asc",
+    },
+  });
+  return res.json({ users });
+});
+
 module.exports = {
   listCollections,
   listCollectionRecords,
@@ -567,4 +603,5 @@ module.exports = {
   deleteCollectionRecord,
   adminUpdateUserSubscription,
   toggleUserFreeAccess,
+  listUsersForSelector,
 };

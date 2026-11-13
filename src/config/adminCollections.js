@@ -231,6 +231,49 @@ const ADMIN_COLLECTIONS = {
     allowCreate: true,
     allowDelete: true,
   },
+  paymentEntries: {
+    key: "paymentEntries",
+    delegate: "paymentEntry",
+    label: "Payment Entries",
+    description: "Modern customer/manufacturer payment entries & allocations.",
+    include: {
+      customer: {
+        select: {
+          id: true,
+          name: true,
+          firmName: true,
+        },
+      },
+      manufacturer: {
+        select: {
+          id: true,
+          name: true,
+          firmName: true,
+        },
+      },
+    },
+    previewFields: [
+      { value: "id", label: "ID" },
+      { value: "serialNo", label: "Serial No" },
+      { value: "partyType", label: "Party Type" },
+      { value: "partyName", label: "Party" },
+      { value: "amount", label: "Amount" },
+      { value: "adjustedAgainst", label: "Adjusted Against" },
+      { value: "paymentMode", label: "Mode" },
+      { value: "isFullySettled", label: "Settled" },
+      { value: "date", label: "Date" },
+      { value: "createdAt", label: "Created" },
+    ],
+    searchFields: [
+      { value: "partyType", label: "Party Type" },
+      { value: "paymentMode", label: "Mode" },
+      { value: "serialNo", label: "Serial No", type: "number" },
+      { value: "remark", label: "Remark" },
+    ],
+    sortableFields: ["createdAt", "updatedAt", "serialNo", "amount", "date"],
+    allowCreate: false,
+    allowDelete: true,
+  },
   paymentAllocations: {
     key: "paymentAllocations",
     delegate: "paymentAllocation",
