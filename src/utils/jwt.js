@@ -21,9 +21,23 @@ function verifyReportShareToken(token) {
   return payload;
 }
 
+function createVoucherLockToken(payload, expiresIn = "60d") {
+  return jwt.sign({ ...payload, tokenType: "VOUCHER_LOCK" }, JWT_SECRET, { expiresIn });
+}
+
+function verifyVoucherLockToken(token) {
+  const payload = jwt.verify(token, JWT_SECRET);
+  if (payload.tokenType !== "VOUCHER_LOCK") {
+    throw new Error("Invalid token type for voucher lock");
+  }
+  return payload;
+}
+
 module.exports = {
   createToken,
   verifyToken,
   createReportShareToken,
   verifyReportShareToken,
+  createVoucherLockToken,
+  verifyVoucherLockToken,
 };

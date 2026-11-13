@@ -25,6 +25,7 @@ const {
   generateCouponBatch,
   updateCoupon,
   deleteCoupon,
+  signVoucherLink,
 } = require("../controllers/couponController");
 const {
   listWhatsAppTemplates,
@@ -48,6 +49,7 @@ router.delete("/support/tickets/:id", deleteTicket);
 router.get("/coupons", listCoupons);
 router.post("/coupons", createCoupon);
 router.post("/coupons/generate-batch", generateCouponBatch);
+router.post("/coupons/sign-link", signVoucherLink);
 router.patch("/coupons/:id", updateCoupon);
 router.delete("/coupons/:id", deleteCoupon);
 

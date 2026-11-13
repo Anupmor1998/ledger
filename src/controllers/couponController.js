@@ -4,6 +4,7 @@ const AppError = require("../utils/appError");
 const asyncHandler = require("../utils/asyncHandler");
 const { PLAN_PRICING, calculateProrationCredit, checkSubscriptionCompatibility } = require("../utils/subscriptionPricing");
 const { broadcastPushNotification } = require("../utils/pushNotifications");
+const { createVoucherLockToken, verifyVoucherLockToken } = require("../utils/jwt");
 
 /**
  * Validate a coupon and calculate discount against a given amount
@@ -112,7 +113,7 @@ function parseExpiryDate(expiresAt) {
  */
 const validateCoupon = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
-  const { code, plan, billingCycle } = req.body;
+  const { code, plan, billingCycle, voucherToken } = req.body;
 
   const normalizedCode = String(code || "").trim().toUpperCase();
   if (!normalizedCode) {
@@ -164,8 +165,34 @@ const validateCoupon = asyncHandler(async (req, res) => {
       subscriptionPlan: true,
       billingCycle: true,
       planExpiresAt: true,
+      contactPhone: true,
     },
   });
+
+  // Check cryptographic voucher lock token if present
+  if (voucherToken) {
+    try {
+      const lockPayload = verifyVoucherLockToken(voucherToken);
+      if (lockPayload.code && lockPayload.code !== coupon.code) {
+        throw new AppError("This voucher token does not match the voucher code.", 400);
+      }
+      if (lockPayload.targetUserId && lockPayload.targetUserId !== userId) {
+        throw new AppError("This private voucher link was issued exclusively for another user account.", 403);
+      }
+      if (lockPayload.targetPhone) {
+        const rawTarget = String(lockPayload.targetPhone).replace(/\D/g, "");
+        const rawUser = String(user?.contactPhone || "").replace(/\D/g, "");
+        const target10 = rawTarget.slice(-10);
+        const user10 = rawUser.slice(-10);
+        if (!user10 || user10 !== target10) {
+          throw new AppError("This private voucher link was issued exclusively for another registered phone number.", 403);
+        }
+      }
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      throw new AppError("This private voucher link is invalid or has expired.", 400);
+    }
+  }
 
   // Subscription compatibility check: Downgrade prevention, Target audience eligibility, Extension calculation
   const compat = checkSubscriptionCompatibility(user, effectivePlan, effectiveCycle, coupon);
@@ -779,6 +806,66 @@ const deleteCoupon = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * ADMIN: POST /api/admin/coupons/sign-link
+ * Generate a cryptographically signed voucher deep link, optionally locked to a specific user or phone
+ */
+const signVoucherLink = asyncHandler(async (req, res) => {
+  const { code, targetUserId, targetPhone } = req.body;
+
+  const normalizedCode = String(code || "").trim().toUpperCase();
+  if (!normalizedCode) {
+    throw new AppError("Coupon code is required.", 400);
+  }
+
+  const coupon = await prisma.coupon.findUnique({
+    where: { code: normalizedCode },
+  });
+
+  if (!coupon) {
+    throw new AppError(`Coupon "${normalizedCode}" not found.`, 404);
+  }
+
+  if (!coupon.isActive) {
+    throw new AppError(`Coupon "${normalizedCode}" is currently inactive.`, 400);
+  }
+
+  let lockedUserName = null;
+  let lockedFirmName = null;
+  let cleanTargetPhone = null;
+
+  if (targetUserId) {
+    const targetUser = await prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { id: true, name: true, firmName: true, contactPhone: true },
+    });
+    if (!targetUser) {
+      throw new AppError("Target user not found.", 404);
+    }
+    lockedUserName = targetUser.name;
+    lockedFirmName = targetUser.firmName;
+    cleanTargetPhone = targetPhone || targetUser.contactPhone || null;
+  } else if (targetPhone) {
+    cleanTargetPhone = String(targetPhone).trim();
+  }
+
+  const token = createVoucherLockToken({
+    code: coupon.code,
+    targetUserId: targetUserId || null,
+    targetPhone: cleanTargetPhone || null,
+  });
+
+  return res.json({
+    code: coupon.code,
+    token,
+    isLocked: Boolean(targetUserId || cleanTargetPhone),
+    targetUserId: targetUserId || null,
+    targetUserName: lockedUserName,
+    targetFirmName: lockedFirmName,
+    targetPhone: cleanTargetPhone,
+  });
+});
+
 module.exports = {
   calculateCouponDiscount,
   checkCouponPerUserLimit,
@@ -790,4 +877,5 @@ module.exports = {
   generateCouponBatch,
   updateCoupon,
   deleteCoupon,
+  signVoucherLink,
 };

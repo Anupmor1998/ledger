@@ -13,6 +13,7 @@ const { getSubscriptionDetails } = require("../middlewares/subscriptionGatingMid
 
 const { PLAN_PRICING, calculateProrationCredit, checkSubscriptionCompatibility } = require("../utils/subscriptionPricing");
 const { calculateCouponDiscount, checkCouponPerUserLimit } = require("./couponController");
+const { verifyVoucherLockToken } = require("../utils/jwt");
 
 /**
  * GET /api/subscription/status
@@ -210,7 +211,7 @@ const previewSubscriptionOrder = asyncHandler(async (req, res) => {
  */
 const createSubscriptionOrder = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
-  const { plan, billingCycle, couponCode } = req.body;
+  const { plan, billingCycle, couponCode, voucherToken } = req.body;
 
   const normalizedPlan = String(plan || "").toUpperCase();
   const normalizedCycle = String(billingCycle || "MONTHLY").toUpperCase();
@@ -254,6 +255,31 @@ const createSubscriptionOrder = asyncHandler(async (req, res) => {
     });
     if (!appliedCoupon) {
       throw new AppError(`Coupon code "${normalizedCode}" is invalid.`, 400);
+    }
+
+    // Verify voucher lock token if present
+    if (voucherToken) {
+      try {
+        const lockPayload = verifyVoucherLockToken(voucherToken);
+        if (lockPayload.code && lockPayload.code !== appliedCoupon.code) {
+          throw new AppError("This voucher token does not match the voucher code.", 400);
+        }
+        if (lockPayload.targetUserId && lockPayload.targetUserId !== userId) {
+          throw new AppError("This private voucher link was issued exclusively for another user account.", 403);
+        }
+        if (lockPayload.targetPhone) {
+          const rawTarget = String(lockPayload.targetPhone).replace(/\D/g, "");
+          const rawUser = String(user?.contactPhone || "").replace(/\D/g, "");
+          const target10 = rawTarget.slice(-10);
+          const user10 = rawUser.slice(-10);
+          if (!user10 || user10 !== target10) {
+            throw new AppError("This private voucher link was issued exclusively for another registered phone number.", 403);
+          }
+        }
+      } catch (err) {
+        if (err instanceof AppError) throw err;
+        throw new AppError("This private voucher link is invalid or has expired.", 400);
+      }
     }
 
     // Enforce plan-specific restriction
