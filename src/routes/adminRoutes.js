@@ -26,6 +26,12 @@ const {
   updateCoupon,
   deleteCoupon,
 } = require("../controllers/couponController");
+const {
+  listWhatsAppTemplates,
+  createWhatsAppTemplate,
+  updateWhatsAppTemplate,
+  deleteWhatsAppTemplate,
+} = require("../controllers/whatsAppTemplateController");
 
 const router = express.Router();
 
@@ -44,6 +50,12 @@ router.post("/coupons", createCoupon);
 router.post("/coupons/generate-batch", generateCouponBatch);
 router.patch("/coupons/:id", updateCoupon);
 router.delete("/coupons/:id", deleteCoupon);
+
+// WhatsApp template management routes
+router.get("/whatsapp-templates", listWhatsAppTemplates);
+router.post("/whatsapp-templates", createWhatsAppTemplate);
+router.patch("/whatsapp-templates/:id", updateWhatsAppTemplate);
+router.delete("/whatsapp-templates/:id", deleteWhatsAppTemplate);
 
 router.patch("/users/:id/subscription", adminUpdateUserSubscription);
 router.patch("/users/:id/free-access", toggleUserFreeAccess);

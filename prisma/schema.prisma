@@ -620,3 +620,16 @@ model DeviceToken {
 
   @@index([userId])
 }
+
+model WhatsAppTemplate {
+  id          String   @id @default(uuid())
+  title       String
+  badge       String?  @default("Custom")
+  text        String
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([createdAt])
+}
+
