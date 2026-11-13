@@ -2,7 +2,7 @@ import "dotenv/config";
 import { defineConfig } from "prisma/config";
 
 function getDatasourceUrl(): string | undefined {
-  const raw = process.env.DIRECT_URL || process.env.DATABASE_URL;
+  const raw = process.env.MIGRATE_DATABASE_URL || process.env.DIRECT_URL || process.env.DATABASE_URL;
   if (!raw) return undefined;
   if (!raw.includes("connect_timeout=")) {
     const separator = raw.includes("?") ? "&" : "?";
