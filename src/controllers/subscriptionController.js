@@ -980,7 +980,7 @@ const getInAppReminders = asyncHandler(async (req, res) => {
       type: "WARNING",
       category: "SUBSCRIPTION",
       title: `${sub.plan === "TRIAL" ? "Free Trial" : "Plan"} Expiring Soon`,
-      message: `Your ${sub.plan === "TRIAL" ? "14-day trial" : "subscription"} expires in ${sub.daysRemaining} day${sub.daysRemaining === 1 ? "" : "s"}. Renew today to ensure uninterrupted access.`,
+      message: `Your ${sub.plan === "TRIAL" ? "free trial" : "subscription"} expires in ${sub.daysRemaining} day${sub.daysRemaining === 1 ? "" : "s"}. Renew today to ensure uninterrupted access.`,
       actionLabel: "Renew / Upgrade",
       actionUrl: "/subscription",
       createdAt: new Date().toISOString(),
