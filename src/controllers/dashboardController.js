@@ -183,6 +183,8 @@ const getDashboardSummary = require("../utils/asyncHandler")(async (req, res) =>
       },
     },
     select: {
+      id: true,
+      customerId: true,
       orderDate: true,
       status: true,
       commissionAmount: true,
@@ -194,6 +196,12 @@ const getDashboardSummary = require("../utils/asyncHandler")(async (req, res) =>
       lotMeters: true,
       manufacturerId: true,
       manufacturerCommissionAmount: true,
+      paymentOrderAllocations: {
+        select: {
+          allocatedAmount: true,
+          isSettled: true,
+        },
+      },
     },
   });
 
@@ -205,6 +213,7 @@ const getDashboardSummary = require("../utils/asyncHandler")(async (req, res) =>
   let cancelledCommissionAmount = 0;
   let totalLotInFinancialYear = 0;
   const mfrCommissionEarnedMap = new Map();
+  const custCommissionUnpaidMap = new Map();
   let totalCustomerCommission = 0;
   let totalManufacturerCommission = 0;
 
@@ -234,14 +243,26 @@ const getDashboardSummary = require("../utils/asyncHandler")(async (req, res) =>
     if (isEarnedOrder) {
       totalCustomerCommission += commissionAmount;
       totalManufacturerCommission += manufacturerCommissionAmount;
-    }
 
-    if (order.manufacturerId && isEarnedOrder) {
-      const current = mfrCommissionEarnedMap.get(order.manufacturerId) || 0;
-      mfrCommissionEarnedMap.set(
-        order.manufacturerId,
-        current + manufacturerCommissionAmount
-      );
+      if (order.manufacturerId) {
+        const current = mfrCommissionEarnedMap.get(order.manufacturerId) || 0;
+        mfrCommissionEarnedMap.set(
+          order.manufacturerId,
+          current + manufacturerCommissionAmount
+        );
+      }
+
+      if (order.customerId) {
+        const isSettled = order.paymentOrderAllocations?.some((a) => a.isSettled);
+        const allocated =
+          order.paymentOrderAllocations?.reduce(
+            (sum, a) => sum + Number(a.allocatedAmount || 0),
+            0
+          ) || 0;
+        const unpaid = isSettled ? 0 : Math.max(0, commissionAmount - allocated);
+        const currentCustUnpaid = custCommissionUnpaidMap.get(order.customerId) || 0;
+        custCommissionUnpaidMap.set(order.customerId, currentCustUnpaid + unpaid);
+      }
     }
 
     if (status === "PENDING") {
@@ -284,24 +305,40 @@ const getDashboardSummary = require("../utils/asyncHandler")(async (req, res) =>
     });
   }
 
-  const pendingCommissionSummary = await prisma.pendingPayment.aggregate({
-    where: {
-      userId: req.user.userId,
-      fyStartYear: selectedFinancialYearStart,
-      balanceAmount: {
-        gt: 0,
+  let openCustomerPendingCommissionAmount = 0;
+  if (custCommissionUnpaidMap.size > 0) {
+    const custPartialPayments = await prisma.paymentEntry.findMany({
+      where: {
+        userId: req.user.userId,
+        fyStartYear: selectedFinancialYearStart,
+        partyType: "CUSTOMER",
+        adjustedAgainst: "PARTIAL",
+        customerId: { in: Array.from(custCommissionUnpaidMap.keys()) },
       },
-    },
-    _sum: {
-      balanceAmount: true,
-    },
-  });
+      select: {
+        customerId: true,
+        amount: true,
+        finalSettledAmount: true,
+      },
+    });
 
-  const openCustomerPendingCommissionAmount = Number(pendingCommissionSummary._sum.balanceAmount || 0);
+    const custOnAccountMap = new Map();
+    custPartialPayments.forEach((entry) => {
+      if (!entry.customerId) return;
+      const amt = Number(entry.finalSettledAmount ?? entry.amount ?? 0);
+      const current = custOnAccountMap.get(entry.customerId) || 0;
+      custOnAccountMap.set(entry.customerId, current + amt);
+    });
+
+    custCommissionUnpaidMap.forEach((unpaid, custId) => {
+      const onAccount = custOnAccountMap.get(custId) || 0;
+      const net = Math.max(0, unpaid - onAccount);
+      openCustomerPendingCommissionAmount += net;
+    });
+  }
+
   const openPendingCommissionAmount =
     openCustomerPendingCommissionAmount + totalManufacturerPendingCommission;
-  const totalCommissionAmount =
-    openPendingCommissionAmount + completedCommissionAmount + cancelledCommissionAmount;
 
   const yearlyStart = Math.max(selectedFinancialYearStart - 4, APP_INCEPTION_FY_START_YEAR);
   const yearlyOrdersSource = await prisma.order.findMany({
