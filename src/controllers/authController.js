@@ -96,6 +96,8 @@ const signup = asyncHandler(async (req, res) => {
     throw new AppError("Email and password are required", 400);
   }
 
+  const normalizedEmail = String(email).trim().toLowerCase();
+
   if (password.length < 8) {
     throw new AppError("Password must be at least 8 characters", 400);
   }
@@ -112,11 +114,29 @@ const signup = asyncHandler(async (req, res) => {
     throw new AppError("Mobile phone number is required for signup", 400);
   }
 
+  // 1. Check if email is already registered
+  const existingUserByEmail = await prisma.user.findUnique({
+    where: { email: normalizedEmail },
+    select: { id: true },
+  });
+  if (existingUserByEmail) {
+    throw new AppError("An account with this email already exists. Please log in instead.", 409);
+  }
+
+  // 2. Check if mobile number is already registered to another account
+  const existingUserByPhone = await prisma.user.findFirst({
+    where: { contactPhone: cleanPhone },
+    select: { id: true },
+  });
+  if (existingUserByPhone) {
+    throw new AppError("This mobile number is already registered with another account. Each account must have a unique mobile number.", 409);
+  }
+
   const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
   const trialEndsAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
   const user = await prisma.user.create({
     data: {
-      email,
+      email: normalizedEmail,
       name,
       contactPhone: cleanPhone,
       password: passwordHash,

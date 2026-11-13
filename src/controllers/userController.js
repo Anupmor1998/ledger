@@ -1561,6 +1561,18 @@ const updateMyProfile = asyncHandler(async (req, res) => {
     const rawDigits = String(contactPhone || "").replace(/\D/g, "");
     const cleanPhone = rawDigits.length >= 10 ? rawDigits.slice(-10) : rawDigits || null;
     if (cleanPhone !== user.contactPhone) {
+      if (cleanPhone) {
+        const existingPhoneUser = await prisma.user.findFirst({
+          where: {
+            contactPhone: cleanPhone,
+            id: { not: userId },
+          },
+          select: { id: true },
+        });
+        if (existingPhoneUser) {
+          throw new AppError("This mobile number is already registered with another account.", 409);
+        }
+      }
       updateData.contactPhone = cleanPhone;
       updateData.isPhoneVerified = false;
       updateData.phoneVerifiedAt = null;

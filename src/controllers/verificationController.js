@@ -230,6 +230,18 @@ const verifyPhoneFirebase = asyncHandler(async (req, res) => {
     }
   }
 
+  // Ensure phone number is not already verified or claimed by another user account
+  const existingPhoneUser = await prisma.user.findFirst({
+    where: {
+      contactPhone: normalizedPhone,
+      id: { not: userId },
+    },
+    select: { id: true },
+  });
+  if (existingPhoneUser) {
+    throw new AppError("This mobile number is already registered with another account.", 409);
+  }
+
   // Update user's phone number and verification status
   const updatedUser = await prisma.user.update({
     where: { id: userId },

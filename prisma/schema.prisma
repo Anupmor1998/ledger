@@ -51,6 +51,8 @@ model User {
   subscriptionPayments       SubscriptionPayment[]
   reportShares               ReportShare[]
   deviceTokens               DeviceToken[]
+
+  @@index([contactPhone])
 }
 
 model SubscriptionPayment {
