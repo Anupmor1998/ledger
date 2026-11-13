@@ -60,7 +60,14 @@ function normalizeJsonPayload(payload, config) {
   delete nextPayload.userFirmName;
   delete nextPayload.userSubscriptionPlan;
   delete nextPayload.userBillingCycle;
+  delete nextPayload.customerName;
+  delete nextPayload.manufacturerName;
+  delete nextPayload.qualityName;
+  delete nextPayload.partyName;
   delete nextPayload.user;
+  delete nextPayload.customer;
+  delete nextPayload.manufacturer;
+  delete nextPayload.quality;
 
   (config.hiddenFields || []).forEach((field) => {
     delete nextPayload[field];
@@ -74,26 +81,39 @@ function formatRecordForResponse(item, config) {
   if (!stripped || typeof stripped !== "object") {
     return stripped;
   }
-  if (config.key === "subscriptionPayments" && stripped.user) {
-    return {
-      ...stripped,
-      userName: stripped.user.name || stripped.user.email || "-",
+  let formatted = { ...stripped };
+
+  if (stripped.user) {
+    formatted = {
+      ...formatted,
+      userName: stripped.user.name || stripped.user.firmName || stripped.user.email || "-",
       userEmail: stripped.user.email || "-",
       userFirmName: stripped.user.firmName || "-",
       userSubscriptionPlan: stripped.user.subscriptionPlan || "TRIAL",
       userBillingCycle: stripped.user.billingCycle || "MONTHLY",
     };
   }
+
+  if (config.key === "orders") {
+    formatted = {
+      ...formatted,
+      customerName: stripped.customer?.firmName || stripped.customer?.name || "-",
+      manufacturerName: stripped.manufacturer?.firmName || stripped.manufacturer?.name || "-",
+      qualityName: stripped.quality?.name || "-",
+    };
+  }
+
   if (config.key === "paymentEntries") {
     const partyName =
       item.partyType === "CUSTOMER"
         ? (item.customer?.firmName || item.customer?.name || "-")
         : (item.manufacturer?.firmName || item.manufacturer?.name || "-");
-    return {
-      ...stripped,
+    formatted = {
+      ...formatted,
       partyName,
     };
   }
+
   if (config.key === "users") {
     const sub = getSubscriptionDetails(stripped);
     const effectiveExpiresAt =
@@ -101,15 +121,16 @@ function formatRecordForResponse(item, config) {
         ? (stripped.trialEndsAt || stripped.planExpiresAt)
         : stripped.planExpiresAt;
 
-    return {
-      ...stripped,
+    formatted = {
+      ...formatted,
       subscriptionStatus: sub.status,
       planExpiresAt: effectiveExpiresAt,
       isExpired: sub.isExpired,
       daysRemaining: sub.daysRemaining,
     };
   }
-  return stripped;
+
+  return formatted;
 }
 
 function buildSearchWhere(config, search, searchField) {

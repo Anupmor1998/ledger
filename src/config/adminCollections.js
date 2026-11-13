@@ -90,8 +90,19 @@ const ADMIN_COLLECTIONS = {
     delegate: "customer",
     label: "Customers",
     description: "Customer master data used in orders and reports.",
+    include: {
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          firmName: true,
+        },
+      },
+    },
     previewFields: [
       { value: "id", label: "ID" },
+      { value: "userName", label: "User" },
       { value: "firmName", label: "Firm" },
       { value: "name", label: "Name" },
       { value: "phone", label: "Phone" },
@@ -99,6 +110,7 @@ const ADMIN_COLLECTIONS = {
       { value: "createdAt", label: "Created" },
     ],
     searchFields: [
+      { value: "userName", label: "User Name", relation: "user.name" },
       { value: "firmName", label: "Firm Name" },
       { value: "name", label: "Name" },
       { value: "phone", label: "Phone" },
@@ -113,14 +125,26 @@ const ADMIN_COLLECTIONS = {
     delegate: "manufacturer",
     label: "Manufacturers",
     description: "Manufacturer master data used in orders and reports.",
+    include: {
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          firmName: true,
+        },
+      },
+    },
     previewFields: [
       { value: "id", label: "ID" },
+      { value: "userName", label: "User" },
       { value: "firmName", label: "Firm" },
       { value: "name", label: "Name" },
       { value: "phone", label: "Phone" },
       { value: "createdAt", label: "Created" },
     ],
     searchFields: [
+      { value: "userName", label: "User Name", relation: "user.name" },
       { value: "firmName", label: "Firm Name" },
       { value: "name", label: "Name" },
       { value: "phone", label: "Phone" },
@@ -134,13 +158,28 @@ const ADMIN_COLLECTIONS = {
     delegate: "quality",
     label: "Qualities",
     description: "Quality master records.",
+    include: {
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          firmName: true,
+        },
+      },
+    },
     previewFields: [
       { value: "id", label: "ID" },
+      { value: "userName", label: "User" },
       { value: "name", label: "Name" },
       { value: "isActive", label: "Active" },
+      { value: "createdAt", label: "Created" },
     ],
-    searchFields: [{ value: "name", label: "Name" }],
-    sortableFields: ["name", "isActive"],
+    searchFields: [
+      { value: "userName", label: "User Name", relation: "user.name" },
+      { value: "name", label: "Name" },
+    ],
+    sortableFields: ["createdAt", "updatedAt", "name", "isActive"],
     allowCreate: true,
     allowDelete: true,
   },
@@ -149,9 +188,43 @@ const ADMIN_COLLECTIONS = {
     delegate: "order",
     label: "Orders",
     description: "Order records and settlement state.",
+    include: {
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          firmName: true,
+        },
+      },
+      customer: {
+        select: {
+          id: true,
+          name: true,
+          firmName: true,
+        },
+      },
+      manufacturer: {
+        select: {
+          id: true,
+          name: true,
+          firmName: true,
+        },
+      },
+      quality: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+    },
     previewFields: [
       { value: "id", label: "ID" },
       { value: "orderNo", label: "Order No" },
+      { value: "userName", label: "User" },
+      { value: "customerName", label: "Customer" },
+      { value: "manufacturerName", label: "Manufacturer" },
+      { value: "qualityName", label: "Quality" },
       { value: "status", label: "Status" },
       { value: "quantity", label: "Quantity" },
       { value: "processedQuantity", label: "Processed Qty" },
@@ -160,6 +233,9 @@ const ADMIN_COLLECTIONS = {
       { value: "createdAt", label: "Created" },
     ],
     searchFields: [
+      { value: "userName", label: "User Name", relation: "user.name" },
+      { value: "customerName", label: "Customer Name", relation: "customer.name" },
+      { value: "manufacturerName", label: "Manufacturer Name", relation: "manufacturer.name" },
       { value: "orderNo", label: "Order No", type: "number" },
       { value: "status", label: "Status" },
       { value: "remarks", label: "Remarks" },
@@ -184,16 +260,29 @@ const ADMIN_COLLECTIONS = {
     delegate: "pendingPayment",
     label: "Pending Payments",
     description: "Outstanding payment records for orders.",
+    include: {
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          firmName: true,
+        },
+      },
+    },
     previewFields: [
       { value: "id", label: "ID" },
       { value: "serialNo", label: "Serial No" },
+      { value: "userName", label: "User" },
       { value: "accountName", label: "Account" },
       { value: "amountDue", label: "Amount Due" },
       { value: "amountReceived", label: "Received" },
       { value: "balanceAmount", label: "Balance" },
       { value: "status", label: "Status" },
+      { value: "createdAt", label: "Created" },
     ],
     searchFields: [
+      { value: "userName", label: "User Name", relation: "user.name" },
       { value: "accountName", label: "Account" },
       { value: "status", label: "Status" },
       { value: "serialNo", label: "Serial No", type: "number" },
@@ -214,15 +303,28 @@ const ADMIN_COLLECTIONS = {
     delegate: "paymentReceipt",
     label: "Payment Receipts",
     description: "Payment receipt entries.",
+    include: {
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          firmName: true,
+        },
+      },
+    },
     previewFields: [
       { value: "id", label: "ID" },
       { value: "serialNo", label: "Serial No" },
+      { value: "userName", label: "User" },
       { value: "accountName", label: "Account" },
       { value: "amount", label: "Amount" },
       { value: "paymentMode", label: "Mode" },
       { value: "date", label: "Date" },
+      { value: "createdAt", label: "Created" },
     ],
     searchFields: [
+      { value: "userName", label: "User Name", relation: "user.name" },
       { value: "accountName", label: "Account" },
       { value: "paymentMode", label: "Mode" },
       { value: "serialNo", label: "Serial No", type: "number" },
@@ -237,6 +339,14 @@ const ADMIN_COLLECTIONS = {
     label: "Payment Entries",
     description: "Modern customer/manufacturer payment entries & allocations.",
     include: {
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          firmName: true,
+        },
+      },
       customer: {
         select: {
           id: true,
@@ -255,6 +365,7 @@ const ADMIN_COLLECTIONS = {
     previewFields: [
       { value: "id", label: "ID" },
       { value: "serialNo", label: "Serial No" },
+      { value: "userName", label: "User" },
       { value: "partyType", label: "Party Type" },
       { value: "partyName", label: "Party" },
       { value: "amount", label: "Amount" },
@@ -265,6 +376,7 @@ const ADMIN_COLLECTIONS = {
       { value: "createdAt", label: "Created" },
     ],
     searchFields: [
+      { value: "userName", label: "User Name", relation: "user.name" },
       { value: "partyType", label: "Party Type" },
       { value: "paymentMode", label: "Mode" },
       { value: "serialNo", label: "Serial No", type: "number" },
