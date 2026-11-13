@@ -2,6 +2,7 @@ const prisma = require("../config/prisma");
 const { deleteUserAccount } = require("../services/userService");
 const AppError = require("../utils/appError");
 const asyncHandler = require("../utils/asyncHandler");
+const { getSubscriptionDetails } = require("../middlewares/subscriptionGatingMiddleware");
 const {
   getAdminCollectionConfig,
   getAdminCollectionKeys,
@@ -83,6 +84,21 @@ function formatRecordForResponse(item, config) {
       userBillingCycle: stripped.user.billingCycle || "MONTHLY",
     };
   }
+  if (config.key === "users") {
+    const sub = getSubscriptionDetails(stripped);
+    const effectiveExpiresAt =
+      stripped.subscriptionPlan === "TRIAL"
+        ? (stripped.trialEndsAt || stripped.planExpiresAt)
+        : stripped.planExpiresAt;
+
+    return {
+      ...stripped,
+      subscriptionStatus: sub.status,
+      planExpiresAt: effectiveExpiresAt,
+      isExpired: sub.isExpired,
+      daysRemaining: sub.daysRemaining,
+    };
+  }
   return stripped;
 }
 
@@ -142,6 +158,17 @@ function buildSearchWhere(config, search, searchField) {
           return null;
         }
 
+        if (fieldConfig.type === "enum" || fieldConfig.value === "role") {
+          const upper = term.toUpperCase();
+          if (fieldConfig.value === "role") {
+            if (["USER", "ADMIN"].includes(upper)) {
+              return { role: upper };
+            }
+            return null;
+          }
+          return { [fieldConfig.value]: upper };
+        }
+
         return {
           [fieldConfig.value]: {
             contains: term,
@@ -193,6 +220,22 @@ const listCollectionRecords = asyncHandler(async (req, res) => {
   const searchField = String(req.query.searchField || "").trim();
   const sortBy = String(req.query.sortBy || "").trim();
   const sortOrder = String(req.query.sortOrder || "desc").trim();
+
+  if (config.key === "users") {
+    // Keep expired trial records synced in database for search/filter consistency
+    await prisma.user
+      .updateMany({
+        where: {
+          subscriptionPlan: "TRIAL",
+          trialEndsAt: { lt: new Date() },
+          subscriptionStatus: "ACTIVE",
+        },
+        data: {
+          subscriptionStatus: "EXPIRED",
+        },
+      })
+      .catch(() => {});
+  }
 
   const where = buildSearchWhere(config, search, searchField);
   const findOptions = {

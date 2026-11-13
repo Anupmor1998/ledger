@@ -20,7 +20,7 @@ router.get("/", listOrders);
 router.get("/activity-feed", listOrderActivities);
 router.get("/:id", getOrderById);
 router.get("/:id/activity", getOrderActivity);
-router.put("/:id", updateOrder);
-router.delete("/:id", deleteOrder);
+router.put("/:id", requireActiveSubscription, updateOrder);
+router.delete("/:id", requireActiveSubscription, deleteOrder);
 
 module.exports = router;

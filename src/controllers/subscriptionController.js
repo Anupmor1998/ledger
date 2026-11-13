@@ -90,12 +90,25 @@ const getSubscriptionStatus = asyncHandler(async (req, res) => {
     daysRemaining = Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
   }
 
+  const isExpired = daysRemaining <= 0;
+  const status = isExpired ? "EXPIRED" : user.subscriptionStatus || "ACTIVE";
+
+  if (isExpired && user.subscriptionStatus === "ACTIVE") {
+    prisma.user
+      .update({
+        where: { id: userId },
+        data: { subscriptionStatus: "EXPIRED" },
+      })
+      .catch(() => {});
+  }
+
   return res.json({
     plan: user.subscriptionPlan || "TRIAL",
     isComplimentary: false,
     hasFullAccess: ["GROWTH", "PREMIUM", "COMPLIMENTARY"].includes(user.subscriptionPlan),
     billingCycle: user.billingCycle || "MONTHLY",
-    status: user.subscriptionStatus || "ACTIVE",
+    status,
+    isExpired,
     daysRemaining,
     expiresAt,
     razorpayKeyId: RAZORPAY_KEY_ID || null,

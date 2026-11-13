@@ -1,5 +1,6 @@
 const express = require("express");
 const authMiddleware = require("../middlewares/authMiddleware");
+const { requireActiveSubscription } = require("../middlewares/subscriptionGatingMiddleware");
 const {
   getNextSerialNo,
   getEligibleOrders,
@@ -21,9 +22,9 @@ router.get("/orders", getEligibleOrders);
 router.get("/manufacturer-summary/:manufacturerId", getManufacturerPaymentSummary);
 router.get("/", listPaymentEntries);
 router.get("/:id", getPaymentEntryById);
-router.post("/", createPaymentEntry);
-router.put("/:id", updatePaymentEntry);
-router.post("/:id/settle", settlePartialAccount);
-router.delete("/:id", deletePaymentEntry);
+router.post("/", requireActiveSubscription, createPaymentEntry);
+router.put("/:id", requireActiveSubscription, updatePaymentEntry);
+router.post("/:id/settle", requireActiveSubscription, settlePartialAccount);
+router.delete("/:id", requireActiveSubscription, deletePaymentEntry);
 
 module.exports = router;

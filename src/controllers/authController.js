@@ -12,6 +12,34 @@ const { getFinancialYearStartYear } = require("../utils/financialYear");
 const SALT_ROUNDS = 10;
 
 function buildSessionUser(user) {
+  const isVip =
+    user.subscriptionPlan === "COMPLIMENTARY" ||
+    (user.subscriptionPlan === "PREMIUM" && user.billingCycle === "LIFETIME") ||
+    (user.subscriptionPlan === "PREMIUM" && !user.planExpiresAt);
+
+  const now = new Date();
+  let isExpired = false;
+  if (!isVip && user.role !== "ADMIN") {
+    if ((user.subscriptionPlan === "TRIAL" || !user.subscriptionPlan) && user.trialEndsAt) {
+      isExpired = new Date(user.trialEndsAt).getTime() <= now.getTime();
+    } else if (user.planExpiresAt) {
+      isExpired = new Date(user.planExpiresAt).getTime() <= now.getTime();
+    }
+  }
+
+  const resolvedSubscriptionStatus = isExpired
+    ? "EXPIRED"
+    : user.subscriptionStatus || "ACTIVE";
+
+  if (isExpired && user.subscriptionStatus === "ACTIVE" && user.id) {
+    prisma.user
+      .update({
+        where: { id: user.id },
+        data: { subscriptionStatus: "EXPIRED" },
+      })
+      .catch(() => {});
+  }
+
   return {
     id: user.id,
     email: user.email,
@@ -34,7 +62,7 @@ function buildSessionUser(user) {
         ? "YEARLY"
         : (user.billingCycle || "MONTHLY"),
     isComplimentary: false,
-    subscriptionStatus: user.subscriptionStatus || "ACTIVE",
+    subscriptionStatus: resolvedSubscriptionStatus,
     trialEndsAt: user.trialEndsAt || null,
     planExpiresAt:
       user.subscriptionPlan === "COMPLIMENTARY" || (user.subscriptionPlan === "PREMIUM" && !user.planExpiresAt)
