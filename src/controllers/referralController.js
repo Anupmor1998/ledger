@@ -80,7 +80,7 @@ const getMyReferralInfo = asyncHandler(async (req, res) => {
   const totalConverted = formattedReferrals.filter((r) => r.status === "CONVERTED").length;
 
   const baseUrl = FRONTEND_URL.endsWith("/") ? FRONTEND_URL.slice(0, -1) : FRONTEND_URL;
-  const referralLink = `${baseUrl}/?ref=${code}`;
+  const referralLink = `${baseUrl}/signup?ref=${code}`;
 
   return res.json({
     success: true,
