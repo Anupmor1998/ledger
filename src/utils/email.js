@@ -83,6 +83,7 @@ async function sendUniversalEmail({ to, subject, html, text, name }) {
     try {
       const res = await fetch("https://api.brevo.com/v3/smtp/email", {
         method: "POST",
+        signal: AbortSignal.timeout(6000), // 6s fast failover timeout
         headers: {
           "api-key": process.env.BREVO_API_KEY.trim(),
           "Content-Type": "application/json",
@@ -114,6 +115,7 @@ async function sendUniversalEmail({ to, subject, html, text, name }) {
     try {
       const res = await fetch("https://api.resend.com/emails", {
         method: "POST",
+        signal: AbortSignal.timeout(6000), // 6s fast failover timeout
         headers: {
           Authorization: `Bearer ${process.env.RESEND_API_KEY.trim()}`,
           "Content-Type": "application/json",

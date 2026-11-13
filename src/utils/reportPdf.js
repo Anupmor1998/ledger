@@ -1,3 +1,4 @@
+const fs = require("fs");
 const PDFDocument = require("pdfkit");
 
 const META_FILL = "#d9d9d9";
@@ -15,6 +16,27 @@ const FONT_GUJARATI_REGULAR =
   require.resolve("@fontsource/noto-sans-gujarati/files/noto-sans-gujarati-gujarati-400-normal.woff");
 const FONT_GUJARATI_BOLD =
   require.resolve("@fontsource/noto-sans-gujarati/files/noto-sans-gujarati-gujarati-700-normal.woff");
+
+// Pre-load font buffers into memory once to eliminate synchronous disk reads on every PDF request
+let fontBuffersCache = null;
+function getFontBuffers() {
+  if (!fontBuffersCache) {
+    fontBuffersCache = {
+      ReportLatinRegular: fs.readFileSync(FONT_LATIN_REGULAR),
+      ReportLatinBold: fs.readFileSync(FONT_LATIN_BOLD),
+      ReportDevanagariRegular: fs.readFileSync(FONT_DEVANAGARI_REGULAR),
+      ReportDevanagariBold: fs.readFileSync(FONT_DEVANAGARI_BOLD),
+      ReportGujaratiRegular: fs.readFileSync(FONT_GUJARATI_REGULAR),
+      ReportGujaratiBold: fs.readFileSync(FONT_GUJARATI_BOLD),
+    };
+  }
+  return fontBuffersCache;
+}
+
+// Yield execution to the Node.js event loop so other HTTP requests are never blocked
+function yieldEventLoop() {
+  return new Promise((resolve) => setImmediate(resolve));
+}
 
 const COLUMN_FIXED_WIDTHS = {
   amount: 48,
@@ -428,7 +450,7 @@ function drawFooterLine(doc, line, totalWidth) {
   );
 }
 
-function renderSheet(doc, sheetConfig) {
+async function renderSheet(doc, sheetConfig) {
   const columns = Array.isArray(sheetConfig.columns) ? sheetConfig.columns : [];
   const sections = Array.isArray(sheetConfig.sections)
     ? sheetConfig.sections
@@ -451,7 +473,8 @@ function renderSheet(doc, sheetConfig) {
   }
 
   if (sections.length > 0) {
-    sections.forEach((section, sectionIndex) => {
+    for (let sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
+      const section = sections[sectionIndex];
       if (section.pageBreakBefore && sectionIndex > 0) {
         doc.addPage();
         if (Array.isArray(section.pageBreakHeaderLines) && section.pageBreakHeaderLines.length > 0) {
@@ -492,22 +515,30 @@ function renderSheet(doc, sheetConfig) {
         drawTableHeader(doc, sectionColumns, sectionWidths);
       }
 
-      sectionRows.forEach((row) => {
-        drawDataRow(doc, sectionColumns, sectionWidths, row);
-      });
+      for (let rIdx = 0; rIdx < sectionRows.length; rIdx++) {
+        drawDataRow(doc, sectionColumns, sectionWidths, sectionRows[rIdx]);
+        // Yield to event loop every 40 rows to prevent blocking concurrent HTTP requests
+        if (rIdx > 0 && rIdx % 40 === 0) {
+          await yieldEventLoop();
+        }
+      }
 
       footerLines.forEach((line) =>
         drawFooterLine(doc, line, totalWidth),
       );
-    });
+    }
   } else {
     if (columns.length > 0) {
       drawTableHeader(doc, columns, widths);
     }
     const rows = Array.isArray(sheetConfig.rows) ? sheetConfig.rows : [];
-    rows.forEach((row) => {
-      drawDataRow(doc, columns, widths, row);
-    });
+    for (let rIdx = 0; rIdx < rows.length; rIdx++) {
+      drawDataRow(doc, columns, widths, rows[rIdx]);
+      // Yield to event loop every 40 rows to prevent blocking concurrent HTTP requests
+      if (rIdx > 0 && rIdx % 40 === 0) {
+        await yieldEventLoop();
+      }
+    }
   }
 }
 
@@ -524,12 +555,13 @@ async function buildPdfBuffer(sheets, options = {}) {
     autoFirstPage: true,
   });
 
-  doc.registerFont("ReportLatinRegular", FONT_LATIN_REGULAR);
-  doc.registerFont("ReportLatinBold", FONT_LATIN_BOLD);
-  doc.registerFont("ReportDevanagariRegular", FONT_DEVANAGARI_REGULAR);
-  doc.registerFont("ReportDevanagariBold", FONT_DEVANAGARI_BOLD);
-  doc.registerFont("ReportGujaratiRegular", FONT_GUJARATI_REGULAR);
-  doc.registerFont("ReportGujaratiBold", FONT_GUJARATI_BOLD);
+  const fontBuffers = getFontBuffers();
+  doc.registerFont("ReportLatinRegular", fontBuffers.ReportLatinRegular);
+  doc.registerFont("ReportLatinBold", fontBuffers.ReportLatinBold);
+  doc.registerFont("ReportDevanagariRegular", fontBuffers.ReportDevanagariRegular);
+  doc.registerFont("ReportDevanagariBold", fontBuffers.ReportDevanagariBold);
+  doc.registerFont("ReportGujaratiRegular", fontBuffers.ReportGujaratiRegular);
+  doc.registerFont("ReportGujaratiBold", fontBuffers.ReportGujaratiBold);
 
   const chunks = [];
   return new Promise((resolve, reject) => {
@@ -537,14 +569,20 @@ async function buildPdfBuffer(sheets, options = {}) {
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
 
-    sheets.forEach((sheet) => {
-      renderSheet(doc, sheet);
-      if (sheets[sheets.length - 1] !== sheet) {
-        doc.addPage();
+    (async () => {
+      try {
+        for (let sIdx = 0; sIdx < sheets.length; sIdx++) {
+          await renderSheet(doc, sheets[sIdx]);
+          if (sIdx < sheets.length - 1) {
+            doc.addPage();
+          }
+          await yieldEventLoop();
+        }
+        doc.end();
+      } catch (err) {
+        reject(err);
       }
-    });
-
-    doc.end();
+    })();
   });
 }
 
