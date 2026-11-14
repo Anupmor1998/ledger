@@ -69,8 +69,55 @@ function normalizeJsonPayload(payload, config) {
   delete nextPayload.manufacturer;
   delete nextPayload.quality;
 
+  // Delete computed / virtual fields added by formatRecordForResponse
+  delete nextPayload.isExpired;
+  delete nextPayload.daysRemaining;
+
   (config.hiddenFields || []).forEach((field) => {
     delete nextPayload[field];
+  });
+
+  // Handle phone fields that might have been typed as numbers in JSON
+  if (nextPayload.contactPhone !== undefined) {
+    if (nextPayload.contactPhone === null || String(nextPayload.contactPhone).trim() === "") {
+      nextPayload.contactPhone = null;
+    } else {
+      const digits = String(nextPayload.contactPhone).replace(/\D/g, "");
+      nextPayload.contactPhone = digits.length >= 10 ? digits.slice(-10) : digits;
+    }
+  }
+
+  if (nextPayload.phone !== undefined) {
+    if (nextPayload.phone === null || String(nextPayload.phone).trim() === "") {
+      nextPayload.phone = null;
+    } else {
+      const digits = String(nextPayload.phone).replace(/\D/g, "");
+      nextPayload.phone = digits.length >= 10 ? digits.slice(-10) : String(nextPayload.phone).trim();
+    }
+  }
+
+  // Parse ISO date strings to Date objects for DateTime columns
+  const dateFields = [
+    "trialEndsAt",
+    "planExpiresAt",
+    "emailVerifiedAt",
+    "phoneVerifiedAt",
+    "expiresAt",
+    "paidAt",
+    "deliveryDate",
+    "paymentDate",
+  ];
+  dateFields.forEach((field) => {
+    if (nextPayload[field] !== undefined) {
+      if (nextPayload[field] === null || nextPayload[field] === "") {
+        nextPayload[field] = null;
+      } else if (typeof nextPayload[field] === "string") {
+        const d = new Date(nextPayload[field]);
+        if (!isNaN(d.getTime())) {
+          nextPayload[field] = d;
+        }
+      }
+    }
   });
 
   return nextPayload;
@@ -365,6 +412,24 @@ const updateCollectionRecord = asyncHandler(async (req, res) => {
   }
 
   const data = normalizeJsonPayload(req.body, config);
+
+  // If updating a user and contactPhone is provided, enforce uniqueness across all other accounts
+  if (config.key === "users" && data.contactPhone) {
+    const existing = await prisma.user.findFirst({
+      where: {
+        contactPhone: data.contactPhone,
+        id: { not: id },
+      },
+      select: { id: true, email: true, name: true },
+    });
+    if (existing) {
+      throw new AppError(
+        `Mobile number ${data.contactPhone} is already assigned to user "${existing.name || existing.email}". Each user must have a unique mobile number.`,
+        409
+      );
+    }
+  }
+
   const updated = await delegate.update({
     where: { id },
     data,
